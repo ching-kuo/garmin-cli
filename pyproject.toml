@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "garmin-cli"
+version = "0.1.0"
+description = "CLI tool for extracting health and activity data from Garmin Connect"
+requires-python = ">=3.10"
+dependencies = [
+    "garth>=0.4",
+    "click>=8.0",
+    "tabulate>=0.9",
+]
+
+[project.scripts]
+garmin-cli = "garmin_cli.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src", "."]
+include = ["garmin_cli*", "garmin*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
