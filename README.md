@@ -18,25 +18,49 @@ garmin-cli --version
 
 ## Authentication
 
-`garmin-cli` authenticates via the [`garth`](https://github.com/matin/garth) library. Two methods are supported:
+`garmin-cli` authenticates via the [`garth`](https://github.com/matin/garth) library.
 
-**Saved session (recommended):** On first use, provide credentials via environment variables. The session is saved to `~/.garth` for subsequent runs.
+### Interactive login (recommended)
+
+```bash
+garmin-cli login
+# Email: your@email.com
+# Password: (hidden)
+# Login successful. Session saved at: ~/.garth
+```
+
+Use `--email` / `--password` to skip the prompts (useful for scripting):
+
+```bash
+garmin-cli login --email your@email.com --password yourpassword
+```
+
+Check login status at any time:
+
+```bash
+garmin-cli login status
+# Logged in. Session saved at: ~/.garth
+
+garmin-cli --json login status
+# {"ok": true, "command": "login status", "count": 1, "data": [{"authenticated": true, "garth_home": "..."}]}
+```
+
+### Environment variables (alternative)
 
 ```bash
 export GARMIN_EMAIL="your@email.com"
 export GARMIN_PASSWORD="yourpassword"
-garmin-cli health sleep --days 1   # saves session on first run
+garmin-cli health sleep --days 1
 ```
 
-**Environment variables only:** Set both `GARMIN_EMAIL` and `GARMIN_PASSWORD` each time.
-
-**Custom session directory:**
+### Custom session directory
 
 ```bash
+garmin-cli --garth-home /path/to/session login
 garmin-cli --garth-home /path/to/session health sleep --days 1
 ```
 
-The session directory (`~/.garth`) contains OAuth tokens. It is created with `0o700` permissions and session files are secured to `0o600`. Symlinks are rejected. Do not share this directory.
+The session directory (`~/.garth`) contains OAuth tokens. It is created with `0o700` permissions. Symlinks are rejected. Do not share this directory.
 
 ## Output Formats
 

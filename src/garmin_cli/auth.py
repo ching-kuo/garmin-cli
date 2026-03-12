@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import stat
 from datetime import date
+from typing import Any
 
 import garth
 
@@ -45,10 +46,16 @@ def _status_code(exc: Exception) -> int | None:
     return None
 
 
-def _probe_session() -> None:
-    """Verify that resumed tokens still authorize a simple Garmin request."""
+def _probe_session(garth_client: Any | None = None) -> None:
+    """Verify that resumed tokens still authorize a simple Garmin request.
+
+    garth_client defaults to the module-level garth so callers can pass
+    their own patched instance in tests without also patching auth.garth.
+    """
+    if garth_client is None:
+        garth_client = garth
     today = date.today()
-    garth.connectapi(
+    garth_client.connectapi(
         f"/calendar-service/year/{today.year}/month/{today.month - 1}/day/{today.day}/start/1"
     )
 

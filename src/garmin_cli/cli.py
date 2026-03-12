@@ -11,6 +11,7 @@ from click.testing import CliRunner
 from garmin_cli import __version__
 from garmin_cli.commands.activities import activity
 from garmin_cli.commands.health import health
+from garmin_cli.commands.login import login
 from garmin_cli.commands.performance import performance
 from garmin_cli.commands.workouts import workout
 from garmin_cli.config import CliConfig, load_config
@@ -140,6 +141,7 @@ cli.add_command(health)
 cli.add_command(activity)
 cli.add_command(performance)
 cli.add_command(workout)
+cli.add_command(login)
 
 
 def main() -> None:

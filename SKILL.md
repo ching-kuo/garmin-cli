@@ -6,7 +6,7 @@ Extract health, activity, workout, and performance data from Garmin Connect.
 
 - Python 3.10+
 - Install: `pip install .` (from repo root)
-- Authentication: either a saved garth session at `~/.garth` or env vars `GARMIN_EMAIL` and `GARMIN_PASSWORD`
+- Authentication: run `garmin-cli login`, or use a saved garth session at `~/.garth`, or set env vars `GARMIN_EMAIL` / `GARMIN_PASSWORD`
 
 ## Agent Usage
 
@@ -148,13 +148,28 @@ garmin-cli --json performance zones
 
 ## Patterns for agents
 
-### Check authentication first
+### Login and check authentication
+
+```bash
+# Interactive login (saves session to ~/.garth)
+garmin-cli login
+
+# Non-interactive login (for scripting)
+garmin-cli login --email user@example.com --password secret
+
+# Check if a session is active
+garmin-cli --json login status
+```
+
+`login status` returns `{"ok": true, ..., "data": [{"authenticated": true, "garth_home": "..."}]}` when a session is present and `"authenticated": false` when not. Exit code is always `0` (it is an informational command).
+
+After login, verify the session is usable:
 
 ```bash
 garmin-cli --json health status
 ```
 
-If this returns `ok: true`, the session is valid. If `AUTH_MISSING` or `AUTH_FAILED`, fix credentials before proceeding.
+If this returns `ok: true`, the session is valid. If `AUTH_MISSING` or `AUTH_FAILED`, run `garmin-cli login` first.
 
 ### Parse JSON output
 
