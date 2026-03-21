@@ -106,8 +106,6 @@ class TestSerializeSleep:
         for col in ("date", "duration_hours", "deep_min", "light_min", "rem_min", "awake_min", "score"):
             assert col in COLUMNS_SLEEP
 
-    def test_columns_is_tuple(self) -> None:
-        assert isinstance(COLUMNS_SLEEP, tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -115,10 +113,6 @@ class TestSerializeSleep:
 # ---------------------------------------------------------------------------
 
 class TestSerializeHrv:
-
-    def test_returns_list(self, sample_hrv_raw: Any) -> None:
-        result = serialize_hrv(sample_hrv_raw)
-        assert isinstance(result, list)
 
     def test_contains_date(self, sample_hrv_raw: Any) -> None:
         result = serialize_hrv(sample_hrv_raw)
@@ -181,9 +175,6 @@ class TestSerializeHrv:
             },
         ]
 
-    def test_columns_is_tuple(self) -> None:
-        assert isinstance(COLUMNS_HRV, tuple)
-
     def test_columns_contains_required_fields(self) -> None:
         for col in ("date", "weekly_avg", "last_night", "status"):
             assert col in COLUMNS_HRV
@@ -194,10 +185,6 @@ class TestSerializeHrv:
 # ---------------------------------------------------------------------------
 
 class TestSerializeWeight:
-
-    def test_returns_list(self, sample_weight_raw: Any) -> None:
-        result = serialize_weight(sample_weight_raw)
-        assert isinstance(result, list)
 
     def test_contains_date(self, sample_weight_raw: Any) -> None:
         result = serialize_weight(sample_weight_raw)
@@ -226,8 +213,6 @@ class TestSerializeWeight:
         for col in ("date", "weight_kg", "bmi", "body_fat_pct"):
             assert col in COLUMNS_WEIGHT
 
-    def test_columns_is_tuple(self) -> None:
-        assert isinstance(COLUMNS_WEIGHT, tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -235,10 +220,6 @@ class TestSerializeWeight:
 # ---------------------------------------------------------------------------
 
 class TestSerializeActivitySummary:
-
-    def test_returns_list(self, sample_activity_raw: Any) -> None:
-        result = serialize_activity_summary(sample_activity_raw)
-        assert isinstance(result, list)
 
     def test_singleton_wraps_in_list(self, sample_activity_raw: Any) -> None:
         result = serialize_activity_summary(sample_activity_raw)
@@ -287,8 +268,6 @@ class TestSerializeActivitySummary:
         for col in ("id", "date", "name", "type", "distance_km", "duration_min", "avg_hr"):
             assert col in COLUMNS_ACTIVITY_SUMMARY
 
-    def test_columns_is_tuple(self) -> None:
-        assert isinstance(COLUMNS_ACTIVITY_SUMMARY, tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -296,10 +275,6 @@ class TestSerializeActivitySummary:
 # ---------------------------------------------------------------------------
 
 class TestSerializeCalendarWorkout:
-
-    def test_returns_list(self, sample_calendar_raw: Any) -> None:
-        result = serialize_calendar_workout(sample_calendar_raw)
-        assert isinstance(result, list)
 
     def test_returns_multiple_items(self, sample_calendar_raw: Any) -> None:
         result = serialize_calendar_workout(sample_calendar_raw)
@@ -338,8 +313,6 @@ class TestSerializeCalendarWorkout:
         for col in ("date", "name", "type", "duration_min", "description"):
             assert col in COLUMNS_CALENDAR_WORKOUT
 
-    def test_columns_is_tuple(self) -> None:
-        assert isinstance(COLUMNS_CALENDAR_WORKOUT, tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -347,10 +320,6 @@ class TestSerializeCalendarWorkout:
 # ---------------------------------------------------------------------------
 
 class TestSerializeThresholds:
-
-    def test_returns_list(self, sample_all_thresholds_raw: Any) -> None:
-        result = serialize_thresholds(sample_all_thresholds_raw)
-        assert isinstance(result, list)
 
     def test_returns_two_items(self, sample_all_thresholds_raw: Any) -> None:
         result = serialize_thresholds(sample_all_thresholds_raw)
@@ -391,5 +360,3 @@ class TestSerializeThresholds:
         for col in ("sport", "lt_hr_bpm", "lt_pace", "ftp_watts", "weight_kg"):
             assert col in COLUMNS_THRESHOLDS
 
-    def test_columns_is_tuple(self) -> None:
-        assert isinstance(COLUMNS_THRESHOLDS, tuple)

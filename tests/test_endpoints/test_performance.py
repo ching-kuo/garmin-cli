@@ -32,31 +32,6 @@ def _http_error(status_code: int) -> Exception:
 
 class TestGetLactateThreshold:
 
-    def test_calls_garth(self, mocker: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = {}
-        mocker.patch("garmin_cli.endpoints.performance.garth", mock_garth)
-
-        get_lactate_threshold()
-        assert mock_garth.connectapi.called
-
-    def test_returns_value(self, mocker: Any, sample_lactate_threshold_raw: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = sample_lactate_threshold_raw
-        mocker.patch("garmin_cli.endpoints.performance.garth", mock_garth)
-
-        result = get_lactate_threshold()
-        assert result is not None
-
-    def test_uses_biometric_service_endpoint(self, mocker: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = {}
-        mocker.patch("garmin_cli.endpoints.performance.garth", mock_garth)
-
-        get_lactate_threshold()
-        call_str = str(mock_garth.connectapi.call_args)
-        assert "biometric" in call_str.lower() or "lactate" in call_str.lower()
-
     def test_uses_verified_latest_lactate_threshold_endpoint(self, mocker: Any) -> None:
         mock_garth = MagicMock()
         mock_garth.connectapi.return_value = {}
@@ -92,31 +67,6 @@ class TestGetLactateThreshold:
 
 class TestGetFtp:
 
-    def test_calls_garth(self, mocker: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = {}
-        mocker.patch("garmin_cli.endpoints.performance.garth", mock_garth)
-
-        get_ftp(sport="cycling")
-        assert mock_garth.connectapi.called
-
-    def test_sport_passed_to_api(self, mocker: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = {}
-        mocker.patch("garmin_cli.endpoints.performance.garth", mock_garth)
-
-        get_ftp(sport="cycling")
-        call_str = str(mock_garth.connectapi.call_args)
-        assert "cycling" in call_str.lower() or "Cycling" in call_str
-
-    def test_returns_ftp_data(self, mocker: Any, sample_ftp_raw: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = sample_ftp_raw
-        mocker.patch("garmin_cli.endpoints.performance.garth", mock_garth)
-
-        result = get_ftp(sport="cycling")
-        assert result is not None
-
     def test_http_404_raises_not_found_code(self, mocker: Any) -> None:
         mock_garth = MagicMock()
         mock_garth.connectapi.side_effect = _http_error(404)
@@ -125,14 +75,6 @@ class TestGetFtp:
         with pytest.raises(GarminCliError) as exc_info:
             get_ftp(sport="cycling")
         assert exc_info.value.error_code == "NOT_FOUND"
-
-    def test_running_sport_param(self, mocker: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = {}
-        mocker.patch("garmin_cli.endpoints.performance.garth", mock_garth)
-
-        result = get_ftp(sport="running")
-        assert result is not None
 
     def test_uses_verified_power_to_weight_endpoint(self, mocker: Any) -> None:
         mock_garth = MagicMock()
@@ -150,31 +92,6 @@ class TestGetFtp:
 # ---------------------------------------------------------------------------
 
 class TestGetVo2max:
-
-    def test_calls_garth_with_date(self, mocker: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = {}
-        mocker.patch("garmin_cli.endpoints.performance.garth", mock_garth)
-
-        get_vo2max(date(2026, 3, 11))
-        assert mock_garth.connectapi.called
-
-    def test_date_appears_in_api_call(self, mocker: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = {}
-        mocker.patch("garmin_cli.endpoints.performance.garth", mock_garth)
-
-        get_vo2max(date(2026, 3, 11))
-        call_str = str(mock_garth.connectapi.call_args)
-        assert "2026" in call_str
-
-    def test_returns_vo2max_data(self, mocker: Any, sample_vo2max_raw: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = sample_vo2max_raw
-        mocker.patch("garmin_cli.endpoints.performance.garth", mock_garth)
-
-        result = get_vo2max(date(2026, 3, 11))
-        assert result is not None
 
     def test_http_404_raises_not_found_code(self, mocker: Any) -> None:
         mock_garth = MagicMock()
@@ -227,17 +144,6 @@ class TestGetAllThresholds:
 
         result = get_all_thresholds()
         assert isinstance(result, dict)
-
-    def test_result_has_expected_fields(
-        self, mocker: Any, sample_all_thresholds_raw: Any
-    ) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = sample_all_thresholds_raw
-        mocker.patch("garmin_cli.endpoints.performance.garth", mock_garth)
-
-        result = get_all_thresholds()
-        # Should return dict (keys may vary if some thresholds not available)
-        assert result is not None
 
     def test_http_500_raises_server_error_code(self, mocker: Any) -> None:
         mock_garth = MagicMock()

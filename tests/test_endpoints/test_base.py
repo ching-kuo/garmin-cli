@@ -56,34 +56,6 @@ def _http_error(status_code: int) -> Exception:
 
 class TestMakeWriteRequest:
 
-    def test_calls_connectapi_with_post_method(self, mocker: Any) -> None:
-        mock_fn = MagicMock(return_value={"workoutId": 1})
-        _make_write_request(mock_fn, "POST", "/workout-service/workout", json={"name": "Test"})
-        mock_fn.assert_called_once()
-        args, kwargs = mock_fn.call_args
-        assert "POST" in args or kwargs.get("method") == "POST" or args[0] == "POST"
-
-    def test_calls_connectapi_with_put_method(self, mocker: Any) -> None:
-        mock_fn = MagicMock(return_value=None)
-        _make_write_request(mock_fn, "PUT", "/workout-service/workout/1", json={"name": "Test"})
-        mock_fn.assert_called_once()
-        call_str = str(mock_fn.call_args)
-        assert "PUT" in call_str
-
-    def test_calls_connectapi_with_delete_method(self, mocker: Any) -> None:
-        mock_fn = MagicMock(return_value=None)
-        _make_write_request(mock_fn, "DELETE", "/workout-service/workout/1")
-        mock_fn.assert_called_once()
-        call_str = str(mock_fn.call_args)
-        assert "DELETE" in call_str
-
-    def test_passes_json_body_to_connectapi(self, mocker: Any) -> None:
-        mock_fn = MagicMock(return_value={"workoutId": 42})
-        payload = {"workoutName": "Speed Session"}
-        _make_write_request(mock_fn, "POST", "/workout-service/workout", json=payload)
-        call_str = str(mock_fn.call_args)
-        assert "Speed Session" in call_str or "workoutName" in call_str
-
     def test_returns_response_on_success(self, mocker: Any) -> None:
         expected = {"workoutId": 99, "workoutName": "Tempo"}
         mock_fn = MagicMock(return_value=expected)

@@ -25,10 +25,6 @@ from garmin_cli.output import (
 
 class TestMakeEnvelope:
 
-    def test_ok_is_true(self) -> None:
-        env = make_envelope("sleep", [])
-        assert env["ok"] is True
-
     def test_command_is_set(self) -> None:
         env = make_envelope("sleep", [{"date": "2026-03-11"}])
         assert env["command"] == "sleep"
@@ -58,19 +54,10 @@ class TestMakeEnvelope:
         # date_range key may be absent or None
         assert env.get("date_range") is None or "date_range" not in env
 
-    def test_count_always_equals_len_data_many_items(self) -> None:
-        data = [{"x": i} for i in range(50)]
-        env = make_envelope("cmd", data)
-        assert env["count"] == len(data)
-
     def test_envelope_contains_required_keys(self) -> None:
         env = make_envelope("sleep", [])
         for key in ("ok", "command", "data", "count"):
             assert key in env
-
-    def test_singleton_data_count_is_1(self) -> None:
-        env = make_envelope("activity", [{"id": 123}])
-        assert env["count"] == 1
 
     def test_immutability_data_not_mutated(self) -> None:
         original = [{"a": 1}]

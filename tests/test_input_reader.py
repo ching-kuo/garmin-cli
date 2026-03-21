@@ -55,12 +55,6 @@ class TestReadWorkoutInput:
         result = read_workout_input(file_path=str(f))
         assert result["name"] == "Morning Run"
 
-    def test_detects_json_by_extension(self, tmp_path: Any) -> None:
-        f = tmp_path / "workout.json"
-        f.write_text(_VALID_JSON)
-        result = read_workout_input(file_path=str(f))
-        assert isinstance(result, dict)
-
     def test_detects_yaml_by_yml_extension(self, tmp_path: Any) -> None:
         f = tmp_path / "workout.yml"
         f.write_text(_VALID_YAML)
@@ -110,12 +104,6 @@ class TestReadWorkoutInput:
         mocker.patch("garmin_cli.input_reader.yaml", None)
         with pytest.raises(GarminCliError):
             read_workout_input(file_path=str(f))
-
-    def test_returns_dict(self, tmp_path: Any) -> None:
-        f = tmp_path / "workout.json"
-        f.write_text(_VALID_JSON)
-        result = read_workout_input(file_path=str(f))
-        assert isinstance(result, dict)
 
     def test_file_path_none_stdin_true_reads_stdin(self, mocker: Any) -> None:
         mock_stream = MagicMock()

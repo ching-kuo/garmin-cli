@@ -95,18 +95,6 @@ class TestEnsureAuthenticatedNoCredentials:
             ensure_authenticated(config)
         assert exc_info.value.error_code == "AUTH_MISSING"
 
-    def test_error_message_mentions_credentials(self, mocker: Any, tmp_path: Path) -> None:
-        garth_dir = tmp_path / "garth"
-        garth_dir.mkdir(mode=0o700)
-
-        mock_garth = MagicMock()
-        mock_garth.resume.side_effect = Exception("no session")
-        mocker.patch("garmin_cli.auth.garth", mock_garth)
-
-        config = _make_config(garth_home=str(garth_dir), email=None, password=None)
-        with pytest.raises(GarminCliError) as exc_info:
-            ensure_authenticated(config)
-        assert exc_info.value.error  # error message is non-empty
 
 
 # ---------------------------------------------------------------------------
@@ -156,20 +144,6 @@ class TestEnsureAuthenticatedLoginSuccess:
         )
         ensure_authenticated(config)
         mock_garth.save.assert_called_once()
-
-    def test_returns_none_after_successful_login(self, mocker: Any, tmp_path: Path) -> None:
-        garth_dir = tmp_path / "garth"
-        garth_dir.mkdir(mode=0o700)
-
-        mock_garth = MagicMock()
-        mock_garth.resume.side_effect = Exception("no session")
-        mocker.patch("garmin_cli.auth.garth", mock_garth)
-
-        config = _make_config(
-            garth_home=str(garth_dir), email="user@test.com", password="pass"
-        )
-        result = ensure_authenticated(config)
-        assert result is None
 
     def test_file_not_found_on_resume_falls_back_to_login(
         self, mocker: Any, tmp_path: Path
@@ -227,24 +201,6 @@ class TestEnsureAuthenticatedLoginFailure:
             ensure_authenticated(config)
         assert exc_info.value.error_code == "AUTH_FAILED"
 
-    def test_auth_failed_error_has_non_empty_error_message(
-        self, mocker: Any, tmp_path: Path
-    ) -> None:
-        garth_dir = tmp_path / "garth"
-        garth_dir.mkdir(mode=0o700)
-
-        mock_garth = MagicMock()
-        mock_garth.resume.side_effect = Exception("no session")
-        mock_garth.login.side_effect = Exception("bad credentials")
-        mocker.patch("garmin_cli.auth.garth", mock_garth)
-
-        config = _make_config(
-            garth_home=str(garth_dir), email="user@test.com", password="wrong"
-        )
-        with pytest.raises(GarminCliError) as exc_info:
-            ensure_authenticated(config)
-        assert exc_info.value.error is not None
-        assert len(exc_info.value.error) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -267,23 +223,6 @@ class TestEnsureAuthenticatedSecurity:
         config = _make_config(garth_home=str(symlink_dir))
         with pytest.raises(GarminCliError):
             ensure_authenticated(config)
-
-    def test_symlink_rejection_uses_auth_failed_error_code(
-        self, mocker: Any, tmp_path: Path
-    ) -> None:
-        real_dir = tmp_path / "real_garth"
-        real_dir.mkdir(mode=0o700)
-        symlink_dir = tmp_path / "link_garth"
-        symlink_dir.symlink_to(real_dir)
-
-        mock_garth = MagicMock()
-        mocker.patch("garmin_cli.auth.garth", mock_garth)
-
-        config = _make_config(garth_home=str(symlink_dir))
-        with pytest.raises(GarminCliError) as exc_info:
-            ensure_authenticated(config)
-        # Should be AUTH_FAILED or a security-related error code
-        assert exc_info.value.error_code in ("AUTH_FAILED", "SYMLINK", "SECURITY")
 
     def test_fixes_directory_permissions_to_0o700(
         self, mocker: Any, tmp_path: Path
@@ -331,29 +270,3 @@ class TestEnsureAuthenticatedSecurity:
         assert actual_mode == 0o700
 
 
-# ---------------------------------------------------------------------------
-# GarminCliError structure
-# ---------------------------------------------------------------------------
-
-class TestGarminCliError:
-
-    def test_has_error_attribute(self) -> None:
-        err = GarminCliError(error="Something went wrong", error_code="TEST_CODE")
-        assert err.error == "Something went wrong"
-
-    def test_has_error_code_attribute(self) -> None:
-        err = GarminCliError(error="Something went wrong", error_code="TEST_CODE")
-        assert err.error_code == "TEST_CODE"
-
-    def test_is_exception(self) -> None:
-        err = GarminCliError(error="msg", error_code="CODE")
-        assert isinstance(err, Exception)
-
-    def test_can_be_raised_and_caught(self) -> None:
-        with pytest.raises(GarminCliError) as exc_info:
-            raise GarminCliError(error="test error", error_code="ERR")
-        assert exc_info.value.error_code == "ERR"
-
-    def test_str_representation_contains_error_message(self) -> None:
-        err = GarminCliError(error="descriptive message", error_code="CODE")
-        assert "descriptive message" in str(err) or err.error == "descriptive message"

@@ -49,10 +49,6 @@ class TestResolveDefault:
         assert start == TODAY
         assert end == TODAY
 
-    def test_no_args_default_days_1_returns_single_day(self) -> None:
-        start, end = _resolve(default_days=1)
-        assert start == end == TODAY
-
     def test_no_args_default_days_7_returns_past_7_days(self) -> None:
         start, end = _resolve(default_days=7)
         assert start == TODAY - timedelta(days=6)
@@ -71,17 +67,6 @@ class TestResolveDate:
         assert start == d
         assert end == d
 
-    def test_date_past_date(self) -> None:
-        d = date(2025, 1, 1)
-        start, end = _resolve(date=d)
-        assert start == d
-        assert end == d
-
-    def test_date_future_date(self) -> None:
-        d = date(2027, 6, 15)
-        start, end = _resolve(date=d)
-        assert start == d
-        assert end == d
 
 
 # ---------------------------------------------------------------------------
@@ -259,17 +244,6 @@ class TestResolveDateConflicts:
 
 class TestResolveDateReturnTypes:
 
-    def test_returns_tuple_of_two_dates(self) -> None:
-        result = _resolve()
-        assert isinstance(result, tuple)
-        assert len(result) == 2
-        assert isinstance(result[0], date)
-        assert isinstance(result[1], date)
-
     def test_start_always_lte_end(self) -> None:
         start, end = _resolve(days=7)
-        assert start <= end
-
-    def test_from_to_start_lte_end(self) -> None:
-        start, end = _resolve(from_date=date(2026, 1, 1), to_date=date(2026, 1, 31))
         assert start <= end

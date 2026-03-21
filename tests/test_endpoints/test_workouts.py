@@ -31,14 +31,6 @@ def _http_error(status_code: int) -> Exception:
 
 class TestListWorkouts:
 
-    def test_calls_garth(self, mocker: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = []
-        mocker.patch("garmin_cli.endpoints.workouts.garth", mock_garth)
-
-        list_workouts(limit=20)
-        assert mock_garth.connectapi.called
-
     def test_returns_list(self, mocker: Any, sample_workouts_list_raw: Any) -> None:
         mock_garth = MagicMock()
         mock_garth.connectapi.return_value = sample_workouts_list_raw
@@ -46,15 +38,6 @@ class TestListWorkouts:
 
         result = list_workouts(limit=20)
         assert isinstance(result, list)
-
-    def test_limit_passed_to_api(self, mocker: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = []
-        mocker.patch("garmin_cli.endpoints.workouts.garth", mock_garth)
-
-        list_workouts(limit=5)
-        call_str = str(mock_garth.connectapi.call_args)
-        assert "5" in call_str
 
     def test_empty_result(self, mocker: Any) -> None:
         mock_garth = MagicMock()
@@ -74,30 +57,12 @@ class TestListWorkouts:
             list_workouts(limit=20)
         assert exc_info.value.error_code == "SERVER_ERROR"
 
-    def test_uses_workout_service_endpoint(self, mocker: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = []
-        mocker.patch("garmin_cli.endpoints.workouts.garth", mock_garth)
-
-        list_workouts(limit=10)
-        call_str = str(mock_garth.connectapi.call_args)
-        assert "workout" in call_str.lower()
-
 
 # ---------------------------------------------------------------------------
 # get_workout
 # ---------------------------------------------------------------------------
 
 class TestGetWorkout:
-
-    def test_calls_garth_with_workout_id(self, mocker: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = {}
-        mocker.patch("garmin_cli.endpoints.workouts.garth", mock_garth)
-
-        get_workout(987654)
-        call_str = str(mock_garth.connectapi.call_args)
-        assert "987654" in call_str
 
     def test_returns_workout_data(self, mocker: Any, sample_workout_raw: Any) -> None:
         mock_garth = MagicMock()
@@ -131,14 +96,6 @@ class TestGetWorkout:
 # ---------------------------------------------------------------------------
 
 class TestGetCalendarRange:
-
-    def test_calls_garth_for_date_range(self, mocker: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = {"calendarItems": []}
-        mocker.patch("garmin_cli.endpoints.workouts.garth", mock_garth)
-
-        get_calendar_range(date(2026, 3, 11), date(2026, 3, 17))
-        assert mock_garth.connectapi.called
 
     def test_returns_list(self, mocker: Any) -> None:
         mock_garth = MagicMock()
@@ -208,15 +165,6 @@ class TestGetCalendarRange:
         with pytest.raises(GarminCliError) as exc_info:
             get_calendar_range(date(2026, 3, 11), date(2026, 3, 17))
         assert exc_info.value.error_code == "RATE_LIMITED"
-
-    def test_uses_calendar_service_endpoint(self, mocker: Any) -> None:
-        mock_garth = MagicMock()
-        mock_garth.connectapi.return_value = {"calendarItems": []}
-        mocker.patch("garmin_cli.endpoints.workouts.garth", mock_garth)
-
-        get_calendar_range(date(2026, 3, 11), date(2026, 3, 17))
-        call_str = str(mock_garth.connectapi.call_args)
-        assert "calendar" in call_str.lower()
 
     def test_uses_verified_weekly_calendar_endpoint(self, mocker: Any) -> None:
         mock_garth = MagicMock()

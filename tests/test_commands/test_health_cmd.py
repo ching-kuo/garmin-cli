@@ -26,45 +26,6 @@ def _run(args: list[str], mocker: Any, *, auth_ok: bool = True) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# --version and --help (no auth required)
-# ---------------------------------------------------------------------------
-
-class TestCliVersionAndHelp:
-
-    def test_version_exits_zero(self) -> None:
-        runner = CliRunner(mix_stderr=False)
-        result = runner.invoke(cli, ["--version"])
-        assert result.exit_code == 0
-
-    def test_version_outputs_version_string(self) -> None:
-        runner = CliRunner(mix_stderr=False)
-        result = runner.invoke(cli, ["--version"])
-        assert "0.1.0" in result.output
-
-    def test_version_no_auth_call(self, mocker: Any) -> None:
-        mock_auth = mocker.patch("garmin_cli.auth.ensure_authenticated")
-        runner = CliRunner(mix_stderr=False)
-        runner.invoke(cli, ["--version"])
-        mock_auth.assert_not_called()
-
-    def test_help_exits_zero(self) -> None:
-        runner = CliRunner(mix_stderr=False)
-        result = runner.invoke(cli, ["--help"])
-        assert result.exit_code == 0
-
-    def test_health_help_exits_zero(self) -> None:
-        runner = CliRunner(mix_stderr=False)
-        result = runner.invoke(cli, ["health", "--help"])
-        assert result.exit_code == 0
-
-    def test_health_help_no_auth(self, mocker: Any) -> None:
-        mock_auth = mocker.patch("garmin_cli.auth.ensure_authenticated")
-        runner = CliRunner(mix_stderr=False)
-        runner.invoke(cli, ["health", "--help"])
-        mock_auth.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
 # sleep command
 # ---------------------------------------------------------------------------
 

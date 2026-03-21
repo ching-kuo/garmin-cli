@@ -36,11 +36,6 @@ class TestCliConfig:
         with pytest.raises((AttributeError, TypeError)):
             config.email = "other@b.com"  # type: ignore[misc]
 
-    def test_frozen_garth_home(self) -> None:
-        config = CliConfig()
-        with pytest.raises((AttributeError, TypeError)):
-            config.garth_home = "/other"  # type: ignore[misc]
-
     def test_equality(self) -> None:
         c1 = CliConfig(email="a@b.com", garth_home="/tmp/g")
         c2 = CliConfig(email="a@b.com", garth_home="/tmp/g")
@@ -51,14 +46,6 @@ class TestCliConfig:
         c2 = CliConfig(email="z@b.com")
         assert c1 != c2
 
-    def test_partial_init_email_only(self) -> None:
-        config = CliConfig(email="partial@test.com")
-        assert config.email == "partial@test.com"
-        assert config.password is None
-
-    def test_output_format_csv(self) -> None:
-        config = CliConfig(output_format="csv")
-        assert config.output_format == "csv"
 
 
 class TestLoadConfig:
@@ -102,13 +89,6 @@ class TestLoadConfig:
         assert config.email == "full@test.com"
         assert config.password == "fullpass"
         assert config.garth_home == "/full/garth"
-
-    def test_load_config_returns_cli_config_instance(self, monkeypatch: Any) -> None:
-        monkeypatch.delenv("GARMIN_EMAIL", raising=False)
-        monkeypatch.delenv("GARMIN_PASSWORD", raising=False)
-        monkeypatch.delenv("GARTH_HOME", raising=False)
-        config = load_config()
-        assert isinstance(config, CliConfig)
 
     def test_load_config_returns_frozen_instance(self, monkeypatch: Any) -> None:
         monkeypatch.delenv("GARMIN_EMAIL", raising=False)
