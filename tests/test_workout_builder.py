@@ -48,9 +48,12 @@ def _existing_workout(workout_id: int = 12345, owner_id: int = 9999) -> dict:
         "workoutName": "Old Name",
         "description": "Old description",
         "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+        "estimatedDurationInSecs": 1800,
+        "estimatedDistanceInMeters": 5000,
         "workoutSegments": [
             {
                 "segmentOrder": 1,
+                "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
                 "workoutSteps": [],
             }
         ],
@@ -113,7 +116,7 @@ class TestBuildGarminPayload:
         step = payload["workoutSegments"][0]["workoutSteps"][0]
         ec = step["endCondition"]
         assert ec["conditionTypeKey"] == "distance"
-        assert ec["conditionTypeId"] == 1
+        assert ec["conditionTypeId"] == 3
 
     def test_no_target_type(self) -> None:
         workout = _running_workout(steps=[
@@ -176,6 +179,23 @@ class TestBuildGarminPayload:
         step = payload["workoutSegments"][0]["workoutSteps"][0]
         target = step["targetType"]
         assert target["workoutTargetTypeId"] == 2
+
+    def test_cadence_zone_target_uses_range_values(self) -> None:
+        workout = _running_workout(steps=[
+            {
+                "type": "interval",
+                "duration": {"type": "time", "value": 300},
+                "target": {"type": "cadence.zone", "min": 170, "max": 180},
+            }
+        ])
+        payload = build_garmin_payload(workout)
+        step = payload["workoutSegments"][0]["workoutSteps"][0]
+        target = step["targetType"]
+        assert target["workoutTargetTypeKey"] == "cadence.zone"
+        assert target["workoutTargetTypeId"] == 3
+        assert step.get("targetValueOne") == 170
+        assert step.get("targetValueTwo") == 180
+        assert "zoneNumber" not in step
 
     def test_repeat_step_uses_repeat_group_dto(self) -> None:
         workout = _running_workout(steps=[
@@ -258,6 +278,39 @@ class TestBuildGarminPayload:
         payload = build_garmin_payload(workout)
         assert payload.get("description") == "Easy recovery run"
 
+    def test_time_steps_contribute_estimated_duration(self) -> None:
+        workout = _running_workout(steps=[
+            {"type": "warmup", "duration": {"type": "time", "value": 300}},
+            {"type": "interval", "duration": {"type": "time", "value": 600}},
+        ])
+        payload = build_garmin_payload(workout)
+        assert payload["estimatedDurationInSecs"] == 900
+        assert "estimatedDistanceInMeters" not in payload
+
+    def test_distance_steps_contribute_estimated_distance(self) -> None:
+        workout = _running_workout(steps=[
+            {"type": "interval", "duration": {"type": "distance", "value": 400}},
+            {"type": "interval", "duration": {"type": "distance", "value": 1000}},
+        ])
+        payload = build_garmin_payload(workout)
+        assert payload["estimatedDistanceInMeters"] == 1400
+        assert "estimatedDurationInSecs" not in payload
+
+    def test_repeat_steps_contribute_estimated_metadata(self) -> None:
+        workout = _running_workout(steps=[
+            {
+                "type": "repeat",
+                "count": 3,
+                "steps": [
+                    {"type": "interval", "duration": {"type": "time", "value": 120}},
+                    {"type": "interval", "duration": {"type": "distance", "value": 400}},
+                ],
+            }
+        ])
+        payload = build_garmin_payload(workout)
+        assert payload["estimatedDurationInSecs"] == 360
+        assert payload["estimatedDistanceInMeters"] == 1200
+
     def test_sport_type_has_required_keys(self) -> None:
         payload = build_garmin_payload(_running_workout())
         sport = payload["sportType"]
@@ -291,6 +344,30 @@ class TestMergeWorkoutPayload:
         result, _ = merge_workout_payload(existing, {"sport": "cycling"})
         assert result["sportType"]["sportTypeKey"] == "cycling"
 
+    def test_updates_segment_sport_type_when_only_sport_changes(self) -> None:
+        existing = _existing_workout()
+        result, _ = merge_workout_payload(existing, {"sport": "cycling"})
+        assert result["workoutSegments"][0]["sportType"]["sportTypeKey"] == "cycling"
+
+    def test_preserves_multi_segment_sport_types_on_sport_only_update(self) -> None:
+        existing = _existing_workout()
+        existing["sportType"] = {"sportTypeId": 5, "sportTypeKey": "multi_sport"}
+        existing["workoutSegments"] = [
+            {
+                "segmentOrder": 1,
+                "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+                "workoutSteps": [],
+            },
+            {
+                "segmentOrder": 2,
+                "sportType": {"sportTypeId": 2, "sportTypeKey": "cycling"},
+                "workoutSteps": [],
+            },
+        ]
+        result, _ = merge_workout_payload(existing, {"sport": "multi_sport"})
+        assert result["workoutSegments"][0]["sportType"]["sportTypeKey"] == "running"
+        assert result["workoutSegments"][1]["sportType"]["sportTypeKey"] == "cycling"
+
     def test_overwrites_description_when_provided(self) -> None:
         existing = _existing_workout()
         result, _ = merge_workout_payload(existing, {"description": "New description"})
@@ -306,6 +383,35 @@ class TestMergeWorkoutPayload:
         result, _ = merge_workout_payload(existing, new_input)
         segments = result["workoutSegments"]
         assert len(segments) >= 1
+
+    def test_recomputes_estimated_duration_when_steps_change(self) -> None:
+        existing = _existing_workout()
+        result, _ = merge_workout_payload(
+            existing,
+            {
+                "steps": [
+                    {"type": "interval", "duration": {"type": "time", "value": 300}},
+                    {"type": "cooldown", "duration": {"type": "time", "value": 120}},
+                ]
+            },
+        )
+        assert result["estimatedDurationInSecs"] == 420
+
+    def test_recomputes_estimated_distance_when_steps_change(self) -> None:
+        existing = _existing_workout()
+        result, _ = merge_workout_payload(
+            existing,
+            {"steps": [{"type": "interval", "duration": {"type": "distance", "value": 1600}}]},
+        )
+        assert result["estimatedDistanceInMeters"] == 1600
+
+    def test_clears_stale_distance_when_steps_change_to_time_only(self) -> None:
+        existing = _existing_workout()
+        result, _ = merge_workout_payload(
+            existing,
+            {"steps": [{"type": "interval", "duration": {"type": "time", "value": 300}}]},
+        )
+        assert "estimatedDistanceInMeters" not in result
 
     def test_preserves_existing_segments_when_no_steps(self) -> None:
         existing = _existing_workout()

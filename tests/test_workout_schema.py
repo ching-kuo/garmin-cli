@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from garmin_cli.workout_schema import validate_workout_input
+from garmin_cli.workout_schema import END_CONDITIONS, validate_workout_input
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +240,90 @@ class TestValidateWorkoutInput:
         errors = _errors(data)
         assert len(errors) >= 1
 
+    def test_zone_target_missing_zone_returns_error(self) -> None:
+        data = {
+            **_minimal_workout(),
+            "steps": [
+                {
+                    "type": "interval",
+                    "duration": {"type": "time", "value": 300},
+                    "target": {"type": "heart.rate.zone"},
+                }
+            ],
+        }
+        errors = _errors(data)
+        assert any("missing required field 'zone'" in error for error in errors)
+
+    def test_zone_target_non_int_zone_returns_error(self) -> None:
+        data = {
+            **_minimal_workout(),
+            "steps": [
+                {
+                    "type": "interval",
+                    "duration": {"type": "time", "value": 300},
+                    "target": {"type": "power.zone", "zone": "3"},
+                }
+            ],
+        }
+        errors = _errors(data)
+        assert any("'zone' must be an integer" in error for error in errors)
+
+    def test_speed_zone_target_missing_min_returns_error(self) -> None:
+        data = {
+            **_minimal_workout(),
+            "steps": [
+                {
+                    "type": "interval",
+                    "duration": {"type": "time", "value": 300},
+                    "target": {"type": "speed.zone", "max": 4.0},
+                }
+            ],
+        }
+        errors = _errors(data)
+        assert any("missing required field 'min'" in error for error in errors)
+
+    def test_speed_zone_target_missing_max_returns_error(self) -> None:
+        data = {
+            **_minimal_workout(),
+            "steps": [
+                {
+                    "type": "interval",
+                    "duration": {"type": "time", "value": 300},
+                    "target": {"type": "speed.zone", "min": 3.5},
+                }
+            ],
+        }
+        errors = _errors(data)
+        assert any("missing required field 'max'" in error for error in errors)
+
+    def test_speed_zone_target_non_numeric_bound_returns_error(self) -> None:
+        data = {
+            **_minimal_workout(),
+            "steps": [
+                {
+                    "type": "interval",
+                    "duration": {"type": "time", "value": 300},
+                    "target": {"type": "speed.zone", "min": "3.5", "max": 4.0},
+                }
+            ],
+        }
+        errors = _errors(data)
+        assert any("'min' must be a number" in error for error in errors)
+
+    def test_cadence_zone_target_with_range_is_valid(self) -> None:
+        data = {
+            **_minimal_workout(),
+            "steps": [
+                {
+                    "type": "interval",
+                    "duration": {"type": "time", "value": 300},
+                    "target": {"type": "cadence.zone", "min": 170, "max": 180},
+                }
+            ],
+        }
+        errors = _errors(data)
+        assert errors == []
+
     def test_target_defaults_to_no_target_when_absent(self) -> None:
         data = {
             **_minimal_workout(),
@@ -276,3 +360,12 @@ class TestValidateWorkoutInput:
         del data["sport"]
         errors = _errors(data)
         assert len(errors) >= 2
+
+
+def test_live_verified_end_condition_ids() -> None:
+    assert END_CONDITIONS["time"] == 2
+    assert END_CONDITIONS["distance"] == 3
+    assert END_CONDITIONS["calories"] == 4
+    assert END_CONDITIONS["power"] == 5
+    assert END_CONDITIONS["heart.rate"] == 6
+    assert END_CONDITIONS["iterations"] == 7

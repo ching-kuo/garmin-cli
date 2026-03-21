@@ -4,7 +4,14 @@ from __future__ import annotations
 import copy
 
 from garmin_cli.exceptions import GarminCliError
-from garmin_cli.workout_schema import END_CONDITIONS, SPORT_TYPES, STEP_TYPES, TARGET_TYPES
+from garmin_cli.workout_schema import (
+    END_CONDITIONS,
+    RANGE_TARGETS,
+    SPORT_TYPES,
+    STEP_TYPES,
+    TARGET_TYPES,
+    ZONE_TARGETS,
+)
 
 # Read-only fields from the Garmin API that must never be overwritten by user input.
 _READ_ONLY_FIELDS = frozenset(
@@ -17,11 +24,44 @@ _SPEED_ZONE_ID = 6
 
 _NO_TARGET = {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"}
 
-# Zone-based target types (use zoneNumber)
-_ZONE_TARGETS = {"heart.rate.zone", "power.zone", "cadence.zone"}
 
-# Range-based target types (use targetValueOne / targetValueTwo)
-_RANGE_TARGETS = {"speed.zone"}
+def _estimate_step_metrics(step: dict) -> tuple[int, int]:
+    """Return estimated (duration_secs, distance_meters) for one simplified step."""
+    if step["type"] == "repeat":
+        count = step.get("count", 0)
+        nested_duration = 0
+        nested_distance = 0
+        for nested in step.get("steps", []):
+            duration_secs, distance_meters = _estimate_step_metrics(nested)
+            nested_duration += duration_secs
+            nested_distance += distance_meters
+        return nested_duration * count, nested_distance * count
+
+    duration = step["duration"]
+    duration_type = duration["type"]
+    duration_value = duration["value"]
+    if duration_type == "time":
+        return duration_value, 0
+    if duration_type == "distance":
+        return 0, duration_value
+    return 0, 0
+
+
+def _compute_estimated_metrics(steps: list[dict]) -> dict:
+    """Return aggregate estimated metadata derived from simplified steps."""
+    duration_secs = 0
+    distance_meters = 0
+    for step in steps:
+        step_duration, step_distance = _estimate_step_metrics(step)
+        duration_secs += step_duration
+        distance_meters += step_distance
+
+    metrics: dict = {}
+    if duration_secs > 0:
+        metrics["estimatedDurationInSecs"] = duration_secs
+    if distance_meters > 0:
+        metrics["estimatedDistanceInMeters"] = distance_meters
+    return metrics
 
 
 def _build_target(target: dict | None) -> tuple[dict, dict]:
@@ -36,11 +76,20 @@ def _build_target(target: dict | None) -> tuple[dict, dict]:
 
     target_type_key = target.get("type", "no.target")
 
+    # Resolve Garmin API key and ID (speed.zone remaps to pace.zone)
     if target_type_key == "speed.zone":
-        target_type = {
-            "workoutTargetTypeId": _SPEED_ZONE_ID,
-            "workoutTargetTypeKey": _SPEED_ZONE_KEY,
-        }
+        api_key = _SPEED_ZONE_KEY
+        type_id = _SPEED_ZONE_ID
+    else:
+        api_key = target_type_key
+        type_id = TARGET_TYPES.get(target_type_key, 1)
+
+    target_type = {
+        "workoutTargetTypeId": type_id,
+        "workoutTargetTypeKey": api_key,
+    }
+
+    if target_type_key in RANGE_TARGETS:
         extra: dict = {}
         if "min" in target:
             extra["targetValueOne"] = target["min"]
@@ -48,23 +97,13 @@ def _build_target(target: dict | None) -> tuple[dict, dict]:
             extra["targetValueTwo"] = target["max"]
         return target_type, extra
 
-    if target_type_key in _ZONE_TARGETS:
-        type_id = TARGET_TYPES.get(target_type_key, 1)
-        target_type = {
-            "workoutTargetTypeId": type_id,
-            "workoutTargetTypeKey": target_type_key,
-        }
+    if target_type_key in ZONE_TARGETS:
         extra = {}
         if "zone" in target:
             extra["zoneNumber"] = target["zone"]
         return target_type, extra
 
     # Generic (no.target, open, etc.)
-    type_id = TARGET_TYPES.get(target_type_key, 1)
-    target_type = {
-        "workoutTargetTypeId": type_id,
-        "workoutTargetTypeKey": target_type_key,
-    }
     return target_type, {}
 
 
@@ -87,7 +126,6 @@ def _build_step(step: dict, order: int) -> dict:
             "workoutSteps": nested_steps,
         }
 
-    # Executable step
     step_type_id = STEP_TYPES.get(step_type_key)
     if step_type_id is None:
         raise GarminCliError(
@@ -168,6 +206,8 @@ def build_garmin_payload(input_data: dict) -> dict:
     if "description" in input_data:
         payload["description"] = input_data["description"]
 
+    payload.update(_compute_estimated_metrics(input_data["steps"]))
+
     return payload
 
 
@@ -199,7 +239,13 @@ def merge_workout_payload(existing: dict, user_input: dict) -> tuple[dict, list[
         merged["workoutName"] = user_input["name"]
 
     if "sport" in user_input:
-        merged["sportType"] = _build_sport_type(user_input["sport"])
+        sport_type = _build_sport_type(user_input["sport"])
+        merged["sportType"] = sport_type
+        segments = merged.get("workoutSegments", [])
+        if isinstance(segments, list) and len(segments) == 1:
+            segment = segments[0]
+            if isinstance(segment, dict):
+                segment["sportType"] = dict(sport_type)
 
     if "description" in user_input:
         merged["description"] = user_input["description"]
@@ -215,6 +261,11 @@ def merge_workout_payload(existing: dict, user_input: dict) -> tuple[dict, list[
         }
         rebuilt = build_garmin_payload(temp_input)
         merged["workoutSegments"] = rebuilt["workoutSegments"]
+        for key in ("estimatedDurationInSecs", "estimatedDistanceInMeters"):
+            if key in rebuilt:
+                merged[key] = rebuilt[key]
+            else:
+                merged.pop(key, None)
 
     # Ensure read-only fields from existing are not overwritten
     for field in _READ_ONLY_FIELDS:

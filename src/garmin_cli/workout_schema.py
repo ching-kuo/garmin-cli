@@ -22,12 +22,11 @@ STEP_TYPES: dict[str, int] = {
 }
 
 END_CONDITIONS: dict[str, int] = {
-    "distance": 1,
+    "distance": 3,
     "time": 2,
-    "heart.rate": 3,
+    "heart.rate": 6,
     "calories": 4,
-    "cadence": 5,
-    "power": 6,
+    "power": 5,
     "iterations": 7,
 }
 
@@ -41,6 +40,50 @@ TARGET_TYPES: dict[str, int] = {
 }
 
 _VALID_DURATION_TYPES = {"time", "distance"}
+
+# Zone-based target types (use zoneNumber)
+ZONE_TARGETS = frozenset({"heart.rate.zone", "power.zone"})
+
+# Range-based target types (use targetValueOne / targetValueTwo)
+RANGE_TARGETS = frozenset({"speed.zone", "cadence.zone"})
+
+
+def _validate_target(target: object, index: int, prefix: str) -> list[str]:
+    """Validate target-specific required fields for a step."""
+    errors: list[str] = []
+
+    if not isinstance(target, dict):
+        errors.append(f"{prefix}[{index}]: 'target' must be a dict")
+        return errors
+
+    target_type = target.get("type")
+    if target_type not in TARGET_TYPES:
+        errors.append(
+            f"{prefix}[{index}]: invalid target type {target_type!r}; "
+            f"must be one of {sorted(TARGET_TYPES)}"
+        )
+        return errors
+
+    if target_type in ZONE_TARGETS:
+        zone = target.get("zone")
+        if zone is None:
+            errors.append(f"{prefix}[{index}]: target missing required field 'zone'")
+        elif not isinstance(zone, int):
+            errors.append(f"{prefix}[{index}]: target 'zone' must be an integer")
+
+    if target_type in RANGE_TARGETS:
+        min_value = target.get("min")
+        max_value = target.get("max")
+        if min_value is None:
+            errors.append(f"{prefix}[{index}]: target missing required field 'min'")
+        elif not isinstance(min_value, (int, float)):
+            errors.append(f"{prefix}[{index}]: target 'min' must be a number")
+        if max_value is None:
+            errors.append(f"{prefix}[{index}]: target missing required field 'max'")
+        elif not isinstance(max_value, (int, float)):
+            errors.append(f"{prefix}[{index}]: target 'max' must be a number")
+
+    return errors
 
 
 def _validate_step(step: object, index: int, prefix: str) -> list[str]:
@@ -93,15 +136,7 @@ def _validate_step(step: object, index: int, prefix: str) -> list[str]:
 
     target = step.get("target")
     if target is not None:
-        if not isinstance(target, dict):
-            errors.append(f"{prefix}[{index}]: 'target' must be a dict")
-        else:
-            target_type = target.get("type")
-            if target_type not in TARGET_TYPES:
-                errors.append(
-                    f"{prefix}[{index}]: invalid target type {target_type!r}; "
-                    f"must be one of {sorted(TARGET_TYPES)}"
-                )
+        errors.extend(_validate_target(target, index, prefix))
 
     return errors
 
