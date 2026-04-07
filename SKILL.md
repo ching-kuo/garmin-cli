@@ -403,15 +403,15 @@ garmin-cli --format csv health sleep --days 30 > sleep.csv
 
 ## MCP Server (Alternative)
 
-For Claude Code/Desktop integration via MCP protocol instead of shell commands:
+For Claude Code/Desktop integration via MCP protocol instead of shell commands. Uses MCP Python SDK v2 (MCPServer).
 
 ### Install
 
 ```bash
-pip install garmin-cli[mcp]
+pip install "garmin-cli[mcp]"
 ```
 
-### Register with Claude Code
+### Register with Claude Code (stdio)
 
 ```bash
 claude mcp add --transport stdio garmin -- garmin-cli mcp-server
@@ -422,6 +422,15 @@ Or with a custom garth home:
 ```bash
 claude mcp add --transport stdio garmin -- garmin-cli --garth-home /path/to/.garth mcp-server
 ```
+
+### HTTP transports (SSE / streamable-http)
+
+```bash
+garmin-cli mcp-server --transport streamable-http --host 127.0.0.1 --port 8000
+garmin-cli mcp-server --transport sse --host 127.0.0.1 --port 8000
+```
+
+See README.md for full HTTP transport options and authentication notes.
 
 ### Available tools
 

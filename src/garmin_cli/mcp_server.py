@@ -1,4 +1,4 @@
-"""MCP server exposing Garmin Connect endpoints as tools via FastMCP."""
+"""MCP server exposing Garmin Connect endpoints as tools via MCPServer."""
 from __future__ import annotations
 
 import os
@@ -6,8 +6,8 @@ from datetime import date
 from typing import Any
 
 import garth
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from garmin_cli.auth import _probe_session, _secure_directory, ensure_authenticated
 from garmin_cli.config import CliConfig
@@ -120,14 +120,14 @@ def _latest_vo2max_rows(rows: list[dict[str, object]]) -> list[dict[str, object]
     return [row for row in rows if row.get("date") == latest_date]
 
 
-def create_mcp_server(config: CliConfig) -> FastMCP:
-    """Create a FastMCP server with Garmin Connect tools.
+def create_mcp_server(config: CliConfig) -> MCPServer:
+    """Create an MCPServer with Garmin Connect tools.
 
     Args:
         config: CLI configuration (garth_home, credentials, etc.)
             captured by closure so every tool call has access.
     """
-    mcp = FastMCP("garmin")
+    mcp = MCPServer("garmin")
 
     # -- Health tools -------------------------------------------------------
 
