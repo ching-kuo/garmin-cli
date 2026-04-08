@@ -222,7 +222,7 @@ garmin-cli --json activity list --limit 5
 
 ## MCP Server (Optional)
 
-Expose garmin-cli as an MCP tool server for local or remote MCP clients.
+Expose garmin-cli as an MCP tool server (26 read-only tools) for local or remote MCP clients.
 
 This project currently tracks the MCP Python SDK v2 API from a pinned commit on the official `modelcontextprotocol/python-sdk` repository. MCP v2 is not yet published on PyPI as a stable `2.x` release, so the `mcp` extra installs from that pinned Git source.
 
