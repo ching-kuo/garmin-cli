@@ -1,4 +1,4 @@
-"""Tests for garmin_cli.endpoints.activities — list_activities, get_activity, get_activity_weather."""
+"""Tests for garmin_cli.endpoints.activities — list_activities, get_activity, get_activity_weather, multisport."""
 from __future__ import annotations
 
 from typing import Any
@@ -8,7 +8,10 @@ import pytest
 
 from garmin_cli.endpoints.activities import (
     get_activity,
+    get_activity_splits,
     get_activity_weather,
+    get_multisport_children,
+    is_multisport_parent,
     list_activities,
 )
 from garmin_cli.exceptions import GarminCliError
@@ -116,3 +119,146 @@ class TestGetActivityWeather:
         with pytest.raises(GarminCliError) as exc_info:
             get_activity_weather(99999999)
         assert exc_info.value.error_code == "NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# get_activity_splits
+# ---------------------------------------------------------------------------
+
+class TestGetActivitySplits:
+
+    def test_returns_splits_data(self, mocker: Any) -> None:
+        mock_garth = MagicMock()
+        mock_garth.connectapi.return_value = {"lapDTOs": []}
+        mocker.patch("garmin_cli.endpoints.activities.garth", mock_garth)
+
+        result = get_activity_splits(12345678)
+        assert isinstance(result, dict)
+
+    def test_returns_empty_dict_on_none(self, mocker: Any) -> None:
+        mock_garth = MagicMock()
+        mock_garth.connectapi.return_value = None
+        mocker.patch("garmin_cli.endpoints.activities.garth", mock_garth)
+
+        result = get_activity_splits(12345678)
+        assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# is_multisport_parent
+# ---------------------------------------------------------------------------
+
+class TestIsMultisportParent:
+
+    def test_detects_top_level_flag(self) -> None:
+        activity = {"isMultiSportParent": True, "activityType": {"typeKey": "running"}}
+        assert is_multisport_parent(activity) is True
+
+    def test_detects_metadata_flag(self) -> None:
+        activity = {"metadataDTO": {"isMultiSportParent": True}, "activityType": {"typeKey": "running"}}
+        assert is_multisport_parent(activity) is True
+
+    def test_detects_multi_sport_type_key(self) -> None:
+        activity = {"activityType": {"typeKey": "multi_sport"}}
+        assert is_multisport_parent(activity) is True
+
+    def test_detects_multisport_type_key(self) -> None:
+        activity = {"activityType": {"typeKey": "multisport"}}
+        assert is_multisport_parent(activity) is True
+
+    def test_detects_child_ids_only(self) -> None:
+        activity = {"childIds": [111, 222], "activityType": {"typeKey": "running"}}
+        assert is_multisport_parent(activity) is True
+
+    def test_detects_metadata_child_ids_only(self) -> None:
+        activity = {"metadataDTO": {"childIds": [111, 222]}}
+        assert is_multisport_parent(activity) is True
+
+    def test_false_for_regular_activity(self) -> None:
+        activity = {"activityType": {"typeKey": "running"}, "isMultiSportParent": False}
+        assert is_multisport_parent(activity) is False
+
+    def test_false_for_empty(self) -> None:
+        assert is_multisport_parent({}) is False
+
+
+# ---------------------------------------------------------------------------
+# get_multisport_children
+# ---------------------------------------------------------------------------
+
+class TestGetMultisportChildren:
+
+    def test_fetches_children_from_child_ids(
+        self, mocker: Any, sample_multisport_parent_raw: Any, sample_multisport_children_raw: Any,
+    ) -> None:
+        mock_garth = MagicMock()
+        mock_garth.connectapi.side_effect = sample_multisport_children_raw
+        mocker.patch("garmin_cli.endpoints.activities.garth", mock_garth)
+
+        children = get_multisport_children(sample_multisport_parent_raw)
+        assert len(children) == 3
+        assert children[0]["activityName"] == "Swim"
+        assert children[2]["activityName"] == "Run"
+
+    def test_fetches_children_from_metadata_child_ids(self, mocker: Any) -> None:
+        parent = {
+            "metadataDTO": {"childIds": [111, 222]},
+        }
+        mock_garth = MagicMock()
+        mock_garth.connectapi.side_effect = [
+            {"activityId": 111, "activityName": "Swim"},
+            {"activityId": 222, "activityName": "Bike"},
+        ]
+        mocker.patch("garmin_cli.endpoints.activities.garth", mock_garth)
+
+        children = get_multisport_children(parent)
+        assert len(children) == 2
+
+    def test_returns_empty_for_no_children(self) -> None:
+        parent = {"activityType": {"typeKey": "running"}}
+        assert get_multisport_children(parent) == []
+
+    def test_skips_failed_child_fetch(self, mocker: Any) -> None:
+        parent = {"childIds": [111, 222]}
+        mock_garth = MagicMock()
+        mock_garth.connectapi.side_effect = [
+            {"activityId": 111, "activityName": "Swim"},
+            _http_error(404),
+        ]
+        mocker.patch("garmin_cli.endpoints.activities.garth", mock_garth)
+
+        children = get_multisport_children(parent)
+        assert len(children) == 1
+
+    def test_reraises_auth_error(self, mocker: Any) -> None:
+        parent = {"childIds": [111]}
+        mock_garth = MagicMock()
+        # 401 is not caught by _make_request as GarminCliError, so it
+        # propagates as a raw Exception through get_multisport_children.
+        mock_garth.connectapi.side_effect = _http_error(401)
+        mocker.patch("garmin_cli.endpoints.activities.garth", mock_garth)
+
+        with pytest.raises(Exception, match="401"):
+            get_multisport_children(parent)
+
+    def test_reraises_garmin_auth_error(self, mocker: Any) -> None:
+        parent = {"childIds": [111]}
+        mocker.patch(
+            "garmin_cli.endpoints.activities.get_activity",
+            side_effect=GarminCliError(error="Auth failed", error_code="AUTH_FAILED"),
+        )
+
+        with pytest.raises(GarminCliError) as exc_info:
+            get_multisport_children(parent)
+        assert exc_info.value.error_code == "AUTH_FAILED"
+
+    def test_reraises_rate_limited_error(self, mocker: Any) -> None:
+        parent = {"childIds": [111]}
+        mocker.patch(
+            "garmin_cli.endpoints.activities.get_activity",
+            side_effect=GarminCliError(error="Rate limited", error_code="RATE_LIMITED"),
+        )
+
+        with pytest.raises(GarminCliError) as exc_info:
+            get_multisport_children(parent)
+        assert exc_info.value.error_code == "RATE_LIMITED"

@@ -9,12 +9,14 @@ from garmin_cli.serializers import (
     COLUMNS_ACTIVITY_SUMMARY,
     COLUMNS_CALENDAR_WORKOUT,
     COLUMNS_HRV,
+    COLUMNS_MULTISPORT_CHILDREN,
     COLUMNS_SLEEP,
     COLUMNS_THRESHOLDS,
     COLUMNS_WEIGHT,
     serialize_activity_summary,
     serialize_calendar_workout,
     serialize_hrv,
+    serialize_multisport_children,
     serialize_sleep,
     serialize_thresholds,
     serialize_weight,
@@ -268,6 +270,70 @@ class TestSerializeActivitySummary:
         for col in ("id", "date", "name", "type", "distance_km", "duration_min", "avg_hr"):
             assert col in COLUMNS_ACTIVITY_SUMMARY
 
+
+# ---------------------------------------------------------------------------
+# serialize_multisport_children
+# ---------------------------------------------------------------------------
+
+class TestSerializeMultisportChildren:
+
+    def test_returns_child_rows(self, sample_multisport_children_raw: Any) -> None:
+        result = serialize_multisport_children(sample_multisport_children_raw)
+        assert len(result) == 3
+
+    def test_sport_field_present(self, sample_multisport_children_raw: Any) -> None:
+        result = serialize_multisport_children(sample_multisport_children_raw)
+        assert result[0]["sport"] == "open_water_swimming"
+        assert result[1]["sport"] == "cycling"
+        assert result[2]["sport"] == "running"
+
+    def test_distance_converted_to_km(self, sample_multisport_children_raw: Any) -> None:
+        result = serialize_multisport_children(sample_multisport_children_raw)
+        assert result[0]["distance_km"] == pytest.approx(1.5, rel=0.01)
+        assert result[1]["distance_km"] == pytest.approx(40.0, rel=0.01)
+
+    def test_duration_converted_to_minutes(self, sample_multisport_children_raw: Any) -> None:
+        result = serialize_multisport_children(sample_multisport_children_raw)
+        assert result[0]["duration_min"] == pytest.approx(30.0, rel=0.01)
+        assert result[1]["duration_min"] == pytest.approx(70.0, rel=0.01)
+
+    def test_avg_hr_present(self, sample_multisport_children_raw: Any) -> None:
+        result = serialize_multisport_children(sample_multisport_children_raw)
+        assert result[0]["avg_hr"] == 145
+
+    def test_calories_present(self, sample_multisport_children_raw: Any) -> None:
+        result = serialize_multisport_children(sample_multisport_children_raw)
+        assert result[0]["calories"] == 350
+
+    def test_empty_list(self) -> None:
+        assert serialize_multisport_children([]) == []
+
+    def test_skips_non_dict_items(self) -> None:
+        result = serialize_multisport_children([None, "bad", 123])
+        assert result == []
+
+    def test_summary_dto_fallback(self) -> None:
+        children = [
+            {
+                "activityId": 1,
+                "activityName": "Swim",
+                "activityType": {"typeKey": "swimming"},
+                "summaryDTO": {
+                    "distance": 1500.0,
+                    "duration": 1800.0,
+                    "averageHR": 140,
+                    "averageSpeed": 0.833,
+                    "calories": 300,
+                },
+            }
+        ]
+        result = serialize_multisport_children(children)
+        assert result[0]["distance_km"] == pytest.approx(1.5, rel=0.01)
+        assert result[0]["avg_hr"] == 140
+
+    def test_columns_contains_required_fields(self) -> None:
+        for col in ("id", "sport", "name", "distance_km", "duration_min", "avg_hr", "avg_pace", "calories"):
+            assert col in COLUMNS_MULTISPORT_CHILDREN
 
 
 # ---------------------------------------------------------------------------

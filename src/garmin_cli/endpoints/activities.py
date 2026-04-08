@@ -44,6 +44,59 @@ def get_activity(activity_id: Any) -> dict:
     return result if result is not None else {}
 
 
+def get_activity_splits(activity_id: Any) -> dict:
+    validated = _validate_numeric_id(activity_id, "activity_id")
+    result = _request(f"/activity-service/activity/{validated}/splits")
+    return result if result is not None else {}
+
+
+def get_multisport_children(parent: dict) -> list[dict]:
+    """Fetch child activities for a multisport parent.
+
+    Extracts child IDs from either ``childIds`` or
+    ``metadataDTO.childIds`` and fetches each child activity.
+    Returns an empty list if the activity is not a multisport parent.
+    """
+    child_ids: list[Any] = (
+        parent.get("childIds")
+        or (parent.get("metadataDTO") or {}).get("childIds")
+        or []
+    )
+    if not child_ids:
+        return []
+    children: list[dict] = []
+    for cid in child_ids:
+        try:
+            child = get_activity(cid)
+            if child:
+                children.append(child)
+        except GarminCliError as exc:
+            if exc.error_code == "NOT_FOUND":
+                continue
+            raise
+    return children
+
+
+def is_multisport_parent(activity: dict) -> bool:
+    """Check whether an activity is a multisport parent."""
+    if activity.get("isMultiSportParent") is True:
+        return True
+    metadata = activity.get("metadataDTO")
+    if isinstance(metadata, dict):
+        if metadata.get("isMultiSportParent") is True:
+            return True
+        if metadata.get("childIds"):
+            return True
+    if activity.get("childIds"):
+        return True
+    activity_type = activity.get("activityType")
+    if isinstance(activity_type, dict):
+        type_key = activity_type.get("typeKey", "")
+        if type_key in ("multi_sport", "multisport"):
+            return True
+    return False
+
+
 def get_activity_weather(activity_id: Any) -> dict:
     validated = _validate_numeric_id(activity_id, "activity_id")
     result = _request(f"/activity-service/activity/{validated}/weather")

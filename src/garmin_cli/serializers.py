@@ -58,6 +58,16 @@ COLUMNS_WORKOUT_DETAIL = (
     "steps_summary",
 )
 COLUMNS_THRESHOLDS = ("sport", "lt_hr_bpm", "lt_pace", "ftp_watts", "weight_kg")
+COLUMNS_MULTISPORT_CHILDREN = (
+    "id",
+    "sport",
+    "name",
+    "distance_km",
+    "duration_min",
+    "avg_hr",
+    "avg_pace",
+    "calories",
+)
 COLUMNS_ACTIVITY_WEATHER = (
     "temperature",
     "weatherIconCode",
@@ -466,6 +476,42 @@ def serialize_activity_summary(raw: Any) -> list[dict[str, Any]]:
                 "distance_km": _km(activity.get("distance")),
                 "duration_min": _minutes(activity.get("duration")),
                 "avg_hr": activity.get("averageHR"),
+            }
+        )
+    return rows
+
+
+_PACE_SPORTS: frozenset[str] = frozenset({
+    "running", "trail_running", "treadmill_running",
+    "open_water_swimming", "lap_swimming", "swimming",
+})
+
+
+def serialize_multisport_children(children: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        activity_type = child.get("activityType")
+        type_key = activity_type.get("typeKey") if isinstance(activity_type, dict) else None
+        raw_summary = child.get("summaryDTO")
+        summary = raw_summary if isinstance(raw_summary, dict) else {}
+        distance = _coalesce(child.get("distance"), summary.get("distance"))
+        duration = _coalesce(child.get("duration"), summary.get("duration"))
+        avg_hr = _coalesce(child.get("averageHR"), summary.get("averageHR"))
+        avg_speed = _coalesce(child.get("averageSpeed"), summary.get("averageSpeed"))
+        calories = _coalesce(child.get("calories"), summary.get("calories"))
+        show_pace = avg_speed and type_key in _PACE_SPORTS
+        rows.append(
+            {
+                "id": child.get("activityId"),
+                "sport": type_key,
+                "name": child.get("activityName"),
+                "distance_km": _km(distance),
+                "duration_min": _minutes(duration),
+                "avg_hr": avg_hr,
+                "avg_pace": _pace_from_speed(avg_speed) if show_pace else None,
+                "calories": calories,
             }
         )
     return rows

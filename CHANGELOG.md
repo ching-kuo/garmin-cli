@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Multisport activity support: `activity get` now detects triathlon/multisport parents and fetches per-sport child activities with distance, duration, HR, pace, and calories
+- `get_activity_splits` endpoint for activity split data
+
 ## [1.2.0] - 2026-04-07
 
 ### Added

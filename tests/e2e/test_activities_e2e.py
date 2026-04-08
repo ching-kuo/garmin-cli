@@ -51,6 +51,41 @@ def test_get_activity_by_id(run_cli, activity_id):
 
 
 @pytest.mark.e2e
+def test_get_multisport_activity(run_cli, rate_limiter, cli_runner, garth_session):
+    """Fetch a multisport activity and verify child activities are returned."""
+    from tests.e2e.conftest import _invoke_cli_json
+
+    # Search for a multisport activity in recent history
+    result, parsed = _invoke_cli_json(
+        cli_runner, rate_limiter,
+        ["activity", "list", "--limit", "50", "--type", "multi_sport"],
+    )
+    assert_exit_ok(result)
+    assert_envelope_ok(parsed)
+
+    if not parsed["data"]:
+        pytest.skip("No multisport activities found in account")
+
+    ms_id = parsed["data"][0]["id"]
+    result, parsed = run_cli(["activity", "get", str(ms_id)])
+    assert_exit_ok(result)
+    assert_envelope_ok(parsed)
+
+    # The parent row should exist
+    assert parsed["count"] >= 1
+    parent = parsed["data"][0]
+    assert parent["id"] == ms_id
+
+    # If the API returned childIds, the response should include children
+    if "children" in parsed:
+        children = parsed["children"]
+        assert isinstance(children, list)
+        assert len(children) >= 1
+        for child in children:
+            assert_row_has_keys(child, ["id", "sport", "distance_km", "duration_min"])
+
+
+@pytest.mark.e2e
 def test_get_activity_weather(run_cli, activity_id):
     if activity_id is None:
         pytest.skip("No activities found")

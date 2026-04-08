@@ -233,6 +233,57 @@ def sample_activity_weather_raw() -> dict:
 
 
 @pytest.fixture()
+def sample_multisport_parent_raw() -> dict:
+    return {
+        "activityId": 18878956566,
+        "startTimeLocal": "2026-04-06T06:00:00",
+        "activityName": "Miyakojima City Multisport",
+        "activityType": {"typeKey": "multi_sport"},
+        "isMultiSportParent": True,
+        "childIds": [18878956567, 18878956568, 18878956569],
+        "distance": None,
+        "duration": None,
+        "averageHR": None,
+    }
+
+
+@pytest.fixture()
+def sample_multisport_children_raw() -> list[dict]:
+    return [
+        {
+            "activityId": 18878956567,
+            "activityName": "Swim",
+            "activityType": {"typeKey": "open_water_swimming"},
+            "distance": 1500.0,
+            "duration": 1800.0,
+            "averageHR": 145,
+            "averageSpeed": 0.833,
+            "calories": 350,
+        },
+        {
+            "activityId": 18878956568,
+            "activityName": "Bike",
+            "activityType": {"typeKey": "cycling"},
+            "distance": 40000.0,
+            "duration": 4200.0,
+            "averageHR": 155,
+            "averageSpeed": 9.524,
+            "calories": 900,
+        },
+        {
+            "activityId": 18878956569,
+            "activityName": "Run",
+            "activityType": {"typeKey": "running"},
+            "distance": 10000.0,
+            "duration": 3000.0,
+            "averageHR": 165,
+            "averageSpeed": 3.333,
+            "calories": 600,
+        },
+    ]
+
+
+@pytest.fixture()
 def sample_workout_raw() -> dict:
     return {
         "workoutId": 987654,
