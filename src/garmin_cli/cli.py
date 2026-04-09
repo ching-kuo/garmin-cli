@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-import inspect
 from typing import Any
 
 import click
-from click.testing import CliRunner
 
 from garmin_cli import __version__
 from garmin_cli.commands.activities import activity
@@ -20,16 +18,6 @@ from garmin_cli.output import echo_json, make_error_envelope
 
 _GLOBAL_OPTIONS_WITH_VALUES = ("--format", "--garth-home")
 _MCP_SERVER_TRANSPORTS = ("stdio", "sse", "streamable-http")
-
-
-if "mix_stderr" not in inspect.signature(CliRunner.__init__).parameters:
-    _cli_runner_init = CliRunner.__init__
-
-    def _compat_cli_runner_init(self: CliRunner, *args: Any, mix_stderr: bool | None = None, **kwargs: Any) -> None:
-        _ = mix_stderr
-        _cli_runner_init(self, *args, **kwargs)
-
-    CliRunner.__init__ = _compat_cli_runner_init
 
 
 def _command_name_from_args(args: Sequence[str] | None) -> str:

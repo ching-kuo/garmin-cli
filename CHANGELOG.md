@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+- Deduplicated VO2max latest-day filter into shared `select_latest_dated_rows` in serializers
+- Moved test-only `CliRunner` compat shim from production `cli.py` to `tests/conftest.py`
+- Replaced duplicate `_WEATHER_FIELDS` in MCP server with shared `COLUMNS_ACTIVITY_WEATHER`
+- Consolidated `*_fixes*` test files into canonical test suites
+
 ## [1.3.0] - 2026-04-09
 
 ### Added

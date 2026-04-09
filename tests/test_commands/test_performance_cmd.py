@@ -183,7 +183,7 @@ class TestPerformanceVo2maxCommand:
         )
         runner = CliRunner(mix_stderr=False)
         runner.invoke(cli, ["--json", "performance", "vo2max"])
-        assert mock_latest.called
+        mock_latest.assert_called_once_with()
 
     def test_vo2max_auth_failure_exit_1(self, mocker: Any) -> None:
         from garmin_cli.exceptions import GarminCliError
@@ -206,6 +206,40 @@ class TestPerformanceVo2maxCommand:
         result = runner.invoke(cli, ["performance", "vo2max", "--date", "2026-03-11"])
         assert result.exit_code == 0
         assert "2026-03-11" in result.output or "52.0" in result.output
+
+    def test_vo2max_default_limits_output_to_latest_day(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.performance.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.performance.get_latest_vo2max",
+            return_value=[
+                {
+                    "generic": {
+                        "calendarDate": "2026-03-10",
+                        "vo2MaxValue": 54.0,
+                    },
+                    "cycling": {
+                        "calendarDate": "2026-03-10",
+                        "vo2MaxValue": 55.0,
+                    },
+                },
+                {
+                    "generic": {
+                        "calendarDate": "2026-03-08",
+                        "vo2MaxValue": 52.0,
+                    }
+                },
+            ],
+        )
+        runner = CliRunner(mix_stderr=False)
+
+        result = runner.invoke(cli, ["--json", "performance", "vo2max"])
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["data"] == [
+            {"date": "2026-03-10", "vo2max": 54.0, "sport": "generic"},
+            {"date": "2026-03-10", "vo2max": 55.0, "sport": "cycling"},
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -286,4 +320,3 @@ class TestGarthHomeFlag:
         call_args = mock_auth.call_args
         config = call_args[0][0]
         assert config.garth_home == "/custom/garth"
-

@@ -3,17 +3,22 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Any
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
 from garmin_cli.endpoints.health import (
     get_body_battery,
+    get_body_battery_range,
     get_hrv,
+    get_resting_hr_range,
     get_resting_hr,
     get_sleep,
+    get_spo2_range,
     get_spo2,
+    get_stress_range,
     get_stress,
+    get_training_readiness_range,
     get_training_readiness,
     get_training_status,
     get_weight,
@@ -114,3 +119,49 @@ class TestHealthEndpointErrorHandling:
         with pytest.raises(GarminCliError) as exc_info:
             get_hrv(date(2026, 3, 11), date(2026, 3, 11))
         assert exc_info.value.error_code == "NOT_FOUND"
+
+
+class TestDailyHealthRangeHelpers:
+
+    def test_body_battery_range_collects_each_day(self, mocker: Any) -> None:
+        mock_get = mocker.patch(
+            "garmin_cli.endpoints.health.get_body_battery",
+            side_effect=[
+                {"bodyBatteryValuesArray": [["2026-03-11T08:00:00", 85, "CHARGED"]]},
+                {"bodyBatteryValuesArray": [["2026-03-12T08:00:00", 75, "CHARGED"]]},
+            ],
+        )
+        mock_sleep = mocker.patch("garmin_cli.endpoints._base.time.sleep")
+
+        result = get_body_battery_range(date(2026, 3, 11), date(2026, 3, 12))
+
+        assert result == [
+            {"bodyBatteryValuesArray": [["2026-03-11T08:00:00", 85, "CHARGED"]]},
+            {"bodyBatteryValuesArray": [["2026-03-12T08:00:00", 75, "CHARGED"]]},
+        ]
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once_with(0.5)
+
+    def test_other_range_helpers_reuse_daily_iteration(self, mocker: Any) -> None:
+        mocker.patch(
+            "garmin_cli.endpoints.health.get_stress",
+            side_effect=[{"avgStressLevel": 35}, {"avgStressLevel": 40}],
+        )
+        mocker.patch(
+            "garmin_cli.endpoints.health.get_spo2",
+            side_effect=[{"averageSpO2": 97}, {"averageSpO2": 96}],
+        )
+        mocker.patch(
+            "garmin_cli.endpoints.health.get_resting_hr",
+            side_effect=[{"restingHeartRateValue": 52}, {"restingHeartRateValue": 51}],
+        )
+        mocker.patch(
+            "garmin_cli.endpoints.health.get_training_readiness",
+            side_effect=[{"score": 68}, {"score": 70}],
+        )
+        mocker.patch("garmin_cli.endpoints._base.time.sleep")
+
+        assert len(get_stress_range(date(2026, 3, 11), date(2026, 3, 12))) == 2
+        assert len(get_spo2_range(date(2026, 3, 11), date(2026, 3, 12))) == 2
+        assert len(get_resting_hr_range(date(2026, 3, 11), date(2026, 3, 12))) == 2
+        assert len(get_training_readiness_range(date(2026, 3, 11), date(2026, 3, 12))) == 2

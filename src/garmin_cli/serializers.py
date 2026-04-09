@@ -176,6 +176,16 @@ def _format_pace_seconds(value: Any) -> str | None:
     return None
 
 
+def select_latest_dated_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    dated_rows = [
+        row for row in rows if isinstance(row.get("date"), str) and row.get("date")
+    ]
+    if not dated_rows:
+        return rows[:1]
+    latest_date = max(row["date"] for row in dated_rows)
+    return [row for row in rows if row.get("date") == latest_date]
+
+
 _VO2MAX_NON_SPORT_KEYS: frozenset[str] = frozenset({"userId", "heatAltitudeAcclimation"})
 
 # Garmin API field name -- "hearRate" is their typo, not ours

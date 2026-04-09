@@ -78,8 +78,10 @@ class TestGetWorkout:
         mocker.patch("garmin_cli.endpoints.workouts.garth", mock_garth)
 
         get_workout("987654")
-        call_str = str(mock_garth.connectapi.call_args)
-        assert "987654" in call_str
+        mock_garth.connectapi.assert_called_once_with(
+            "/workout-service/workout/987654",
+            params=None,
+        )
 
 
 # ---------------------------------------------------------------------------

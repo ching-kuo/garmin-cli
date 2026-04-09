@@ -330,7 +330,7 @@ See [SKILL.md](SKILL.md#mcp-server-alternative) for the full tool list and param
 
 ```bash
 pip install -e ".[dev]"
-pytest tests/            # unit tests (709+ tests)
+pytest tests/            # unit tests (699+ tests)
 pytest tests/ --e2e      # unit + e2e tests (requires garth session)
 ```
 

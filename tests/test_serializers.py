@@ -7,20 +7,66 @@ import pytest
 
 from garmin_cli.serializers import (
     COLUMNS_ACTIVITY_SUMMARY,
+    COLUMNS_BODY_BATTERY,
     COLUMNS_CALENDAR_WORKOUT,
     COLUMNS_HRV,
     COLUMNS_MULTISPORT_CHILDREN,
+    COLUMNS_READINESS,
+    COLUMNS_RESTING_HR,
     COLUMNS_SLEEP,
+    COLUMNS_SPO2,
+    COLUMNS_STATUS,
+    COLUMNS_STRESS,
     COLUMNS_THRESHOLDS,
+    COLUMNS_VO2MAX,
     COLUMNS_WEIGHT,
+    COLUMNS_ZONES,
     serialize_activity_summary,
+    serialize_body_battery,
     serialize_calendar_workout,
     serialize_hrv,
     serialize_multisport_children,
+    serialize_resting_hr,
     serialize_sleep,
+    serialize_spo2,
+    serialize_stress,
     serialize_thresholds,
+    serialize_training_readiness,
+    serialize_training_status,
+    serialize_vo2max,
     serialize_weight,
+    serialize_workout_detail,
+    serialize_workout_summary,
+    select_latest_dated_rows,
+    serialize_zones,
 )
+
+
+# ---------------------------------------------------------------------------
+# select_latest_dated_rows
+# ---------------------------------------------------------------------------
+
+
+class TestSelectLatestDatedRows:
+
+    def test_returns_only_latest_date_rows(self) -> None:
+        rows: list[dict[str, object]] = [
+            {"date": "2026-03-10", "vo2max": 54.0, "sport": "generic"},
+            {"date": "2026-03-10", "vo2max": 55.0, "sport": "cycling"},
+            {"date": "2026-03-08", "vo2max": 52.0, "sport": "generic"},
+        ]
+        assert select_latest_dated_rows(rows) == rows[:2]
+
+    def test_empty_input_returns_empty(self) -> None:
+        assert select_latest_dated_rows([]) == []
+
+    def test_no_dated_rows_returns_first(self) -> None:
+        rows: list[dict[str, object]] = [{"vo2max": 52.0}, {"vo2max": 50.0}]
+        assert select_latest_dated_rows(rows) == [rows[0]]
+
+    def test_single_row_returned(self) -> None:
+        rows: list[dict[str, object]] = [{"date": "2026-03-11", "vo2max": 52.0}]
+        assert select_latest_dated_rows(rows) == rows
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +221,28 @@ class TestSerializeHrv:
                 "last_night": 49,
                 "status": "BALANCED",
             },
+        ]
+
+    def test_range_payload_prefers_last_night_avg_when_available(self) -> None:
+        result = serialize_hrv(
+            {
+                "hrvSummaries": [
+                    {
+                        "calendarDate": "2026-03-10",
+                        "weeklyAvg": 50,
+                        "lastNightAvg": 47,
+                        "status": "BALANCED",
+                    }
+                ]
+            }
+        )
+        assert result == [
+            {
+                "date": "2026-03-10",
+                "weekly_avg": 50,
+                "last_night": 47,
+                "status": "BALANCED",
+            }
         ]
 
     def test_columns_contains_required_fields(self) -> None:
@@ -410,6 +478,10 @@ class TestSerializeCalendarWorkout:
         result = serialize_calendar_workout(sample_calendar_raw)
         assert result[0]["date"] == "2026-03-12"
 
+    def test_id_present(self, sample_calendar_raw: Any) -> None:
+        result = serialize_calendar_workout(sample_calendar_raw)
+        assert result[0]["id"] == 987654
+
     def test_name_present(self, sample_calendar_raw: Any) -> None:
         result = serialize_calendar_workout(sample_calendar_raw)
         assert result[0]["name"] == "Tempo Run"
@@ -436,7 +508,7 @@ class TestSerializeCalendarWorkout:
         assert isinstance(result, list)
 
     def test_columns_contains_required_fields(self) -> None:
-        for col in ("date", "name", "type", "duration_min", "description"):
+        for col in ("date", "id", "name", "type", "duration_min", "description"):
             assert col in COLUMNS_CALENDAR_WORKOUT
 
 
@@ -482,9 +554,192 @@ class TestSerializeThresholds:
         assert isinstance(result, list)
         assert result[0].get("sport") is None
 
+    def test_numeric_lt_pace_is_formatted(self) -> None:
+        result = serialize_thresholds(
+            {
+                "thresholds": [
+                    {
+                        "sport": "running",
+                        "lactateThresholdHeartRate": 168,
+                        "lactateThresholdPace": 250,
+                        "functionalThresholdPower": None,
+                        "weight": 75.0,
+                    }
+                ]
+            }
+        )
+        assert result[0]["lt_pace"] == "4:10"
+
     def test_columns_contains_required_fields(self) -> None:
         for col in ("sport", "lt_hr_bpm", "lt_pace", "ftp_watts", "weight_kg"):
             assert col in COLUMNS_THRESHOLDS
+
+
+class TestWorkoutSerializers:
+
+    def test_workout_summary_uses_display_name_and_estimated_duration(
+        self,
+        sample_workout_alt_raw: Any,
+    ) -> None:
+        result = serialize_workout_summary(sample_workout_alt_raw)
+        assert result == [
+            {
+                "id": 987654,
+                "name": "Tempo Run",
+                "sport": "Running",
+                "duration_min": 60.0,
+                "description": "4x10min at threshold pace",
+            }
+        ]
+
+    def test_workout_detail_includes_steps_and_summary(
+        self,
+        sample_workout_detail_raw: Any,
+    ) -> None:
+        result = serialize_workout_detail(sample_workout_detail_raw)
+        assert result[0]["steps_summary"] == "warmup > interval > cooldown"
+        assert result[0]["steps"] == [
+            {
+                "step_order": 1,
+                "step_type": "warmup",
+                "duration_type": "time",
+                "duration_value": 600,
+                "target_type": None,
+                "target_value_low": None,
+                "target_value_high": None,
+            },
+            {
+                "step_order": 2,
+                "step_type": "interval",
+                "duration_type": "time",
+                "duration_value": 300,
+                "target_type": "heart.rate.zone",
+                "target_value_low": 160,
+                "target_value_high": 170,
+            },
+            {
+                "step_order": 3,
+                "step_type": "cooldown",
+                "duration_type": "time",
+                "duration_value": 600,
+                "target_type": None,
+                "target_value_low": None,
+                "target_value_high": None,
+            },
+        ]
+
+    def test_workout_detail_handles_missing_segments(self, sample_workout_raw: Any) -> None:
+        result = serialize_workout_detail(sample_workout_raw)
+        assert result[0]["steps"] == []
+        assert result[0]["steps_summary"] == ""
+
+
+class TestPerformanceSerializers:
+
+    def test_serialize_vo2max_supports_flat_and_wrapped_payloads(
+        self,
+        sample_vo2max_raw: Any,
+        sample_vo2max_wrapped_raw: Any,
+    ) -> None:
+        expected = [{"date": "2026-03-11", "vo2max": 52.0, "sport": "running"}]
+        assert serialize_vo2max(sample_vo2max_raw) == expected
+        assert serialize_vo2max(sample_vo2max_wrapped_raw) == expected
+
+    def test_serialize_vo2max_flattens_live_wrapper_payload(self, sample_vo2max_live_raw: Any) -> None:
+        assert serialize_vo2max(sample_vo2max_live_raw) == [
+            {"date": "2026-03-10", "vo2max": 54.0, "sport": "generic"},
+            {"date": "2026-03-10", "vo2max": 55.0, "sport": "cycling"},
+        ]
+        assert COLUMNS_VO2MAX == ("date", "vo2max", "sport")
+
+    def test_serialize_zones_normalizes_speed_and_preserves_pace_string(self) -> None:
+        assert serialize_zones(
+            {
+                "sport": "running",
+                "lactateThresholdHeartRate": 168,
+                "lactateThresholdSpeed": 3.2,
+            }
+        ) == [{"sport": "running", "lt_hr_bpm": 168, "lt_pace": "5:12"}]
+        assert serialize_zones(
+            {
+                "sport": "running",
+                "lactateThresholdHeartRate": 168,
+                "lactateThresholdPace": "4:10",
+            }
+        ) == [{"sport": "running", "lt_hr_bpm": 168, "lt_pace": "4:10"}]
+        assert COLUMNS_ZONES == ("sport", "lt_hr_bpm", "lt_pace")
+
+    def test_serialize_zones_merges_live_lactate_payload(
+        self,
+        sample_lactate_threshold_live_raw: Any,
+    ) -> None:
+        assert serialize_zones(sample_lactate_threshold_live_raw) == [
+            {"sport": "running", "lt_hr_bpm": 177, "lt_pace": "4:26"}
+        ]
+
+
+@pytest.mark.parametrize(
+    ("serializer", "payload_fixture", "expected", "columns", "required_columns"),
+    [
+        (
+            serialize_body_battery,
+            "sample_body_battery_raw",
+            {"date": "2026-03-11", "start_level": 85, "end_level": 60},
+            COLUMNS_BODY_BATTERY,
+            ("date", "start_level", "end_level"),
+        ),
+        (
+            serialize_stress,
+            "sample_stress_raw",
+            {"date": "2026-03-11", "avg_stress": 35, "max_stress": 72},
+            COLUMNS_STRESS,
+            ("date", "avg_stress", "max_stress"),
+        ),
+        (
+            serialize_spo2,
+            "sample_spo2_raw",
+            {"date": "2026-03-11", "avg_spo2": 97, "lowest_spo2": 93},
+            COLUMNS_SPO2,
+            ("date", "avg_spo2", "lowest_spo2"),
+        ),
+        (
+            serialize_resting_hr,
+            "sample_resting_hr_raw",
+            {"date": "2026-03-11", "resting_hr": 52},
+            COLUMNS_RESTING_HR,
+            ("date", "resting_hr"),
+        ),
+        (
+            serialize_training_readiness,
+            "sample_training_readiness_raw",
+            {"date": "2026-03-11", "score": 68, "level": "MODERATE"},
+            COLUMNS_READINESS,
+            ("date", "score", "level"),
+        ),
+        (
+            serialize_training_status,
+            "sample_training_status_raw",
+            {
+                "date": "2026-03-11",
+                "training_status": "PRODUCTIVE",
+                "load_type": "OPTIMAL",
+            },
+            COLUMNS_STATUS,
+            ("date", "training_status", "load_type"),
+        ),
+    ],
+)
+def test_additional_health_serializers(
+    request: pytest.FixtureRequest,
+    serializer: Any,
+    payload_fixture: str,
+    expected: dict[str, Any],
+    columns: tuple[str, ...],
+    required_columns: tuple[str, ...],
+) -> None:
+    payload = request.getfixturevalue(payload_fixture)
+    assert serializer(payload) == [expected]
+    assert columns == required_columns
 
 
 # ---------------------------------------------------------------------------
@@ -732,4 +987,3 @@ class TestSerializeActivityDetail:
         assert result[0]["distance_km"] == pytest.approx(10.0, rel=0.01)
         assert result[0]["duration_min"] == pytest.approx(60.0, rel=0.01)
         assert result[0]["avg_hr"] == 155
-

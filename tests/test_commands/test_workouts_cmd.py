@@ -1,6 +1,7 @@
 """CLI integration tests for workout commands using CliRunner."""
 from __future__ import annotations
 
+from datetime import date, timedelta
 import json
 from typing import Any
 
@@ -48,7 +49,7 @@ class TestWorkoutListCommand:
         mocker.patch("garmin_cli.commands.workouts.ensure_authenticated")
         runner = CliRunner(mix_stderr=False)
         runner.invoke(cli, ["workout", "list", "--limit", "10"])
-        assert "10" in str(mock_list.call_args)
+        mock_list.assert_called_once_with(limit=10)
 
     def test_list_empty_data_count_0(self, mocker: Any) -> None:
         mocker.patch("garmin_cli.commands.workouts.ensure_authenticated")
@@ -211,6 +212,25 @@ class TestWorkoutGetCommand:
         assert result.exit_code == 0
         assert "Tempo Run" in result.output
 
+    def test_get_json_includes_steps_and_summary(
+        self,
+        mocker: Any,
+        sample_workout_detail_raw: Any,
+    ) -> None:
+        mocker.patch("garmin_cli.commands.workouts.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.workouts.get_workout",
+            return_value=sample_workout_detail_raw,
+        )
+        runner = CliRunner(mix_stderr=False)
+
+        result = runner.invoke(cli, ["--json", "workout", "get", "987654"])
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["data"][0]["steps_summary"] == "warmup > interval > cooldown"
+        assert len(parsed["data"][0]["steps"]) == 3
+
 
 # ---------------------------------------------------------------------------
 # workout calendar command
@@ -245,6 +265,22 @@ class TestWorkoutCalendarCommand:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(cli, ["--json", "workout", "calendar", "--ahead", "7"])
         assert result.exit_code == 0
+
+    def test_calendar_defaults_to_seven_days_ahead(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.workouts.ensure_authenticated")
+        mock_calendar = mocker.patch(
+            "garmin_cli.commands.workouts.get_calendar_range",
+            return_value=[],
+        )
+        runner = CliRunner(mix_stderr=False)
+
+        result = runner.invoke(cli, ["--json", "workout", "calendar"])
+
+        assert result.exit_code == 0
+        assert mock_calendar.call_args[0] == (
+            date.today(),
+            date.today() + timedelta(days=6),
+        )
 
     def test_calendar_json_envelope_ok(self, mocker: Any) -> None:
         mocker.patch("garmin_cli.commands.workouts.ensure_authenticated")

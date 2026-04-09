@@ -52,6 +52,8 @@ from garmin_cli.endpoints.workouts import (
 )
 from garmin_cli.exceptions import GarminCliError
 from garmin_cli.serializers import (
+    COLUMNS_ACTIVITY_WEATHER,
+    select_latest_dated_rows,
     serialize_activity_detail,
     serialize_activity_summary,
     serialize_multisport_children,
@@ -80,7 +82,6 @@ from garmin_cli.serializers import (
 )
 
 _MAX_DAYS = 90
-_WEATHER_FIELDS = ("temperature", "weatherIconCode", "windSpeed", "windDirectionDegrees", "humidity", "precipProbability")
 
 
 def _parse_date(value: str, name: str) -> date:
@@ -128,16 +129,6 @@ def _handle_error(exc: GarminCliError) -> ToolError:
     if exc.error_code == "AUTH_MISSING":
         msg = f"{msg} Run `garmin-cli login` to authenticate interactively."
     return ToolError(msg)
-
-
-def _latest_vo2max_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
-    dated_rows = [
-        row for row in rows if isinstance(row.get("date"), str) and row.get("date")
-    ]
-    if not dated_rows:
-        return rows[:1]
-    latest_date = max(row["date"] for row in dated_rows)
-    return [row for row in rows if row.get("date") == latest_date]
 
 
 def create_mcp_server(config: CliConfig) -> MCPServer:
@@ -340,7 +331,7 @@ def create_mcp_server(config: CliConfig) -> MCPServer:
         except GarminCliError as exc:
             raise _handle_error(exc) from exc
         if isinstance(raw, dict) and raw:
-            rows = [{k: raw.get(k) for k in _WEATHER_FIELDS}]
+            rows = [{k: raw.get(k) for k in COLUMNS_ACTIVITY_WEATHER}]
         else:
             rows = []
         return _envelope(rows)
@@ -439,7 +430,7 @@ def create_mcp_server(config: CliConfig) -> MCPServer:
             raise _handle_error(exc) from exc
         rows = serialize_vo2max(raw)
         if date is None:
-            rows = _latest_vo2max_rows(rows)
+            rows = select_latest_dated_rows(rows)
         return _envelope(rows)
 
     @mcp.tool()

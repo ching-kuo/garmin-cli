@@ -1,11 +1,27 @@
 """Shared fixtures for garmin-cli test suite."""
 from __future__ import annotations
 
-from datetime import date
+import inspect
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from click.testing import CliRunner
+
+
+if "mix_stderr" not in inspect.signature(CliRunner.__init__).parameters:
+    _cli_runner_init = CliRunner.__init__
+
+    def _compat_cli_runner_init(
+        self: CliRunner,
+        *args: Any,
+        mix_stderr: bool | None = None,
+        **kwargs: Any,
+    ) -> None:
+        _ = mix_stderr
+        _cli_runner_init(self, *args, **kwargs)
+
+    CliRunner.__init__ = _compat_cli_runner_init
 
 
 # ---------------------------------------------------------------------------

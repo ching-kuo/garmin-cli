@@ -247,6 +247,84 @@ class TestWeightCommand:
         assert parsed["ok"] is True
 
 
+@pytest.mark.parametrize(
+    ("command_name", "patch_name", "payload", "expected"),
+    [
+        (
+            "body-battery",
+            "get_body_battery_range",
+            [{"bodyBatteryValuesArray": [["2026-03-11T08:00:00", 85, "CHARGED"], ["2026-03-11T14:00:00", 60, "DRAINING"]]}],
+            {"date": "2026-03-11", "start_level": 85, "end_level": 60},
+        ),
+        (
+            "stress",
+            "get_stress_range",
+            [{"stressValuesArray": [["2026-03-11T08:00:00", 25]], "avgStressLevel": 35, "maxStressLevel": 72}],
+            {"date": "2026-03-11", "avg_stress": 35, "max_stress": 72},
+        ),
+        (
+            "spo2",
+            "get_spo2_range",
+            [{"dateTime": "2026-03-11", "averageSpO2": 97, "lowestSpO2": 93}],
+            {"date": "2026-03-11", "avg_spo2": 97, "lowest_spo2": 93},
+        ),
+        (
+            "resting-hr",
+            "get_resting_hr_range",
+            [{"calendarDate": "2026-03-11", "restingHeartRateValue": 52}],
+            {"date": "2026-03-11", "resting_hr": 52},
+        ),
+        (
+            "readiness",
+            "get_training_readiness_range",
+            [{"calendarDate": "2026-03-11", "score": 68, "level": "MODERATE"}],
+            {"date": "2026-03-11", "score": 68, "level": "MODERATE"},
+        ),
+    ],
+)
+def test_new_health_range_commands(
+    mocker: Any,
+    command_name: str,
+    patch_name: str,
+    payload: list[dict[str, Any]],
+    expected: dict[str, Any],
+) -> None:
+    mocker.patch("garmin_cli.commands.health.ensure_authenticated")
+    mocker.patch(f"garmin_cli.commands.health.{patch_name}", return_value=payload)
+    runner = CliRunner(mix_stderr=False)
+
+    result = runner.invoke(cli, ["--json", "health", command_name, "--days", "1"])
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.output)
+    assert parsed["data"] == [expected]
+
+
+def test_health_status_single_day_command(mocker: Any) -> None:
+    mocker.patch("garmin_cli.commands.health.ensure_authenticated")
+    mocker.patch(
+        "garmin_cli.commands.health.get_training_status",
+        return_value={
+            "calendarDate": "2026-03-11",
+            "trainingStatusType": "PRODUCTIVE",
+            "trainingLoadType": "OPTIMAL",
+        },
+    )
+    runner = CliRunner(mix_stderr=False)
+
+    result = runner.invoke(cli, ["--json", "health", "status", "--date", "2026-03-11"])
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.output)
+    assert parsed["data"] == [
+        {
+            "date": "2026-03-11",
+            "training_status": "PRODUCTIVE",
+            "load_type": "OPTIMAL",
+        }
+    ]
+
+
 # ---------------------------------------------------------------------------
 # CSV output format
 # ---------------------------------------------------------------------------

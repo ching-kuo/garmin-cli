@@ -10,6 +10,7 @@ import pytest
 from garmin_cli.endpoints.performance import (
     get_all_thresholds,
     get_ftp,
+    get_latest_vo2max,
     get_lactate_threshold,
     get_vo2max,
 )
@@ -111,6 +112,17 @@ class TestGetVo2max:
         get_vo2max(date(2026, 3, 11))
         call_str = str(mock_garth.connectapi.call_args)
         assert "/metrics-service/metrics/maxmet/daily/2026-03-11/2026-03-11" in call_str
+
+    def test_latest_queries_recent_range(self, mocker: Any) -> None:
+        mock_request = mocker.patch(
+            "garmin_cli.endpoints.performance._request",
+            return_value=[],
+        )
+
+        get_latest_vo2max()
+
+        call_url = mock_request.call_args[0][0]
+        assert "/metrics-service/metrics/maxmet/daily/" in call_url
 
 
 # ---------------------------------------------------------------------------
@@ -275,4 +287,45 @@ class TestGetAllThresholds:
                 "functionalThresholdPower": None,
                 "weight": None,
             }
+        ]
+
+    def test_unwraps_value_payload_and_formats_numeric_pace(
+        self,
+        mocker: Any,
+    ) -> None:
+        mocker.patch(
+            "garmin_cli.endpoints.performance.get_lactate_threshold",
+            return_value={
+                "value": {
+                    "sport": "running",
+                    "lactateThresholdHeartRate": 168,
+                    "lactateThresholdPace": 250,
+                }
+            },
+        )
+        mocker.patch(
+            "garmin_cli.endpoints.performance.get_ftp",
+            side_effect=[
+                {"sport": "cycling", "functionalThresholdPower": 280, "weight": 75.0},
+                {"sport": "running", "functionalThresholdPower": 315, "weight": 75.0},
+            ],
+        )
+
+        result = get_all_thresholds()
+
+        assert result["thresholds"] == [
+            {
+                "sport": "running",
+                "lactateThresholdHeartRate": 168,
+                "lactateThresholdPace": "4:10",
+                "functionalThresholdPower": 315,
+                "weight": 75.0,
+            },
+            {
+                "sport": "cycling",
+                "lactateThresholdHeartRate": None,
+                "lactateThresholdPace": None,
+                "functionalThresholdPower": 280,
+                "weight": 75.0,
+            },
         ]
