@@ -2,8 +2,10 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-04-09
+
 ### Added
-- Detail view for activities: `activity get --detail` shows extended metrics (max HR, calories, elevation, speed, cadence, power, normalized power, TSS, intensity factor). MCP `activity_get` gains `detail: bool` parameter
+- Detail view for activities: `activity get --detail` / `-d` shows extended metrics (max HR, calories, elevation gain/loss, avg/max speed, cadence, power, normalized power, TSS, intensity factor). MCP `activity_get` gains `detail: bool` parameter
 - Multisport activity support: `activity get` now detects triathlon/multisport parents and fetches per-sport child activities with distance, duration, HR, pace, and calories
 - Date filtering for `activity list`: `--date`, `--days`, `--from`/`--to` options and MCP `start_date`/`end_date` params
 - `get_activity_splits` endpoint for activity split data
@@ -13,6 +15,7 @@
 
 ### Changed
 - Extracted shared `CLICK_DATE_TYPE` and `resolve_click_dates()` to `date_utils.py` (eliminates duplication between health and activity commands)
+- Refactored `serialize_activity_summary` onto shared `_normalize_activity_base` / `_iter_activity_pairs` helpers
 
 ## [1.2.0] - 2026-04-07
 
