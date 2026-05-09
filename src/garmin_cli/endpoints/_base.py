@@ -117,6 +117,21 @@ def _make_request(
     )
 
 
+def _make_typed_request(typed_method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Execute a typed backend-adapter method with retry on 429/5xx.
+
+    Used for python-garminconnect typed methods (get_activity_typed_splits,
+    get_activity_details, get_activity_hr_in_timezones) that take the
+    activity id directly rather than a URL string.
+    """
+    return _retry_loop(
+        lambda: typed_method(*args, **kwargs),
+        immediate_errors={
+            404: ("Not found.", "NOT_FOUND"),
+        },
+    )
+
+
 def _collect_daily_range(
     getter: Callable[[date], Any],
     start: date,

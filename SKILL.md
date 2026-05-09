@@ -118,14 +118,63 @@ garmin-cli --json activity list --days 7
 # Get a single activity by ID -- same fields as list
 garmin-cli --json activity get 12345678901
 
-# Get with extended metrics (max_hr, calories, elevation, speed, cadence, power, NP, TSS, IF)
+# Sport-aware detail. Cycling rides surface power suite (avg/max/normalized,
+# TSS, IF); running activities surface cadence_spm, GCT, vertical
+# oscillation/ratio, stride length, training effect; pool swims surface
+# SWOLF, total strokes, average stroke rate, distance per stroke. JSON
+# uses a stable union schema -- every key present (null for sport-
+# inapplicable). Includes a top-level `unavailable` array when any
+# registry-known metric is not produced.
 garmin-cli --json activity get 12345678901 --detail
+
+# Detail + lap data in one envelope (--laps appends `laps` array).
+# Pool-swim activities auto-route to per-pool-length rows.
+garmin-cli --json activity get 12345678901 --detail --laps
+
+# Lap-by-lap data (run/bike) or per-pool-length data (lap_swimming)
+garmin-cli --json activity laps 12345678901
+
+# HR time-in-zone breakdown -- fields: zone, zone_low_bpm, zone_high_bpm, seconds_in_zone, minutes_in_zone
+garmin-cli --json activity zones 12345678901
 
 # Weather for an activity -- fields: temperature, weatherIconCode, windSpeed, windDirectionDegrees, humidity, precipProbability
 garmin-cli --json activity weather 12345678901
 ```
 
 `--limit` defaults to 20, max 100. `--type` filters by Garmin activity type key (e.g., `running`, `cycling`, `swimming`).
+
+#### Detailed sport-specific metrics glossary
+
+| Metric (output key) | Unit | Sport applicability | What it is |
+|---------------------|------|---------------------|------------|
+| `norm_power_w` | W | Cycling | Normalized Power -- weighted average that accounts for variable effort |
+| `tss` | -- | Cycling | Training Stress Score (depends on FTP being set in Garmin Connect) |
+| `intensity_factor` | -- | Cycling | NP / FTP ratio for the ride |
+| `avg_cadence_rpm` | rpm | Cycling | Pedal cadence |
+| `avg_cadence_spm` | spm | Running | Step cadence |
+| `avg_ground_contact_time` | ms | Running | Time foot is in contact with the ground per stride (requires HRM-Pro/Run/Tri or RD pod) |
+| `avg_vertical_oscillation` | cm | Running | Vertical "bounce" per stride |
+| `avg_vertical_ratio` | % | Running | Vertical oscillation as a percentage of stride length |
+| `avg_stride_length` | cm | Running | Average stride length |
+| `swolf` | -- | Lap swimming | Strokes + seconds per pool length (lower is better) |
+| `total_strokes` | -- | Lap swimming | Total stroke count |
+| `avg_stroke_rate` | strokes/min | Lap swimming | Average stroke rate |
+| `distance_per_stroke` | m | Lap swimming | Average distance covered per stroke |
+| `aerobic_training_effect` | 0.0-5.0 | Run, Bike | Aerobic load impact score |
+| `anaerobic_training_effect` | 0.0-5.0 | Run, Bike | Anaerobic load impact score |
+| `vo2max` | mL/kg/min | Run, Bike | Sport-specific vO2max estimate |
+| `recovery_time_h` | h | Run, Bike | Recommended recovery hours after the activity |
+
+#### Capability manifest
+
+`activity_get(detail=True)` returns an `unavailable` array (omitted when empty) describing why a metric isn't in the response:
+
+| Reason | Meaning | What an LLM agent should do |
+|--------|---------|-----------------------------|
+| `not_applicable_to_sport` | The metric doesn't apply to this sport (e.g. SWOLF on a bike ride) | Skip this metric for cross-sport rollups |
+| `absent_in_response` | The metric applies to this sport but isn't in the payload (typically: missing FTP/LTHR profile, hardware that doesn't track it, or recent firmware change) | Mention the gap; do not infer a value |
+
+Multisport parents (triathlon, duathlon) union per-child manifests with `leg_index` (0-based) attached to each entry.
 
 ### Workouts
 
@@ -456,8 +505,11 @@ Read-only CLI commands are exposed as MCP tools (write operations like workout c
 | `health_readiness` | `start_date`, `end_date` | `{count, rows}` |
 | `health_training_status` | `date` | `{count, rows}` |
 | `activity_list` | `limit?`, `start?`, `activity_type?`, `search?`, `start_date?`, `end_date?` | `{count, rows}` — `start_date`/`end_date` (YYYY-MM-DD) must be provided together |
-| `activity_get` | `activity_id`, `detail?` | `{count, rows, children?}` — `detail=true` adds max_hr, calories, elevation, speed, cadence, power, NP, TSS, IF |
+| `activity_get` | `activity_id`, `detail?` | `{count, rows, children?, unavailable?}` — `detail=true` projects sport-aware metrics (running dynamics, cycling power, swim aggregates, training response) under a stable union schema and adds an `unavailable[]` capability manifest when non-empty |
 | `activity_weather` | `activity_id` | `{count, rows}` |
+| `activity_laps` | `activity_id` | `{count, rows}` — per-lap rows (run/bike) or per-pool-length rows (lap_swimming) with sport-aware fields. Auto-routes pool swim to typed_splits backend method. Multisport parents fan out to each child leg's laps with a 0-based ``leg_index`` stamped on every row |
+| `activity_hr_zones` | `activity_id` | `{count, rows}` — one row per HR zone with `zone`, `zone_low_bpm`, `zone_high_bpm`, `seconds_in_zone`, `minutes_in_zone` |
+| `activity_metrics_describe` | `activity_id` | `{count, rows}` — descriptors for the metric stream: `key`, `unit`, `metricsIndex`. Use to discover what metrics a watch recorded for a specific activity |
 | `workout_list` | `limit?` | `{count, rows}` |
 | `workout_get` | `workout_id` | `{count, rows}` |
 | `workout_calendar` | `start_date`, `end_date` | `{count, rows}` |
@@ -471,5 +523,9 @@ Read-only CLI commands are exposed as MCP tools (write operations like workout c
 | `login_status` | *(none)* | `{authenticated, garmin_home}` |
 
 Dates use `YYYY-MM-DD` format. Max date range: 90 days. Errors surface as MCP ToolError with the original error message.
+
+`activity_get(detail=true)` may carry an `unavailable[]` array (omitted when empty) annotating registry-known metrics with `not_applicable_to_sport` (the metric isn't meaningful for the sport) or `absent_in_response` (the metric applies but the upstream payload didn't include it). Multisport parents union per-child manifests with a 0-based `leg_index` attached. `activity_laps`, `activity_hr_zones`, and `activity_metrics_describe` do not carry the manifest in this release; use `activity_get(detail=true)` for sport-applicability checks.
+
+Planned but not yet implemented: `activity_swim_lengths` (covered by `activity_laps` for `lap_swimming`) and `activity_metrics_series` (down-sampling policy pending). Hardware/profile manifest reasons (`requires_hardware`, `requires_profile_config`) will land alongside a future profile/threshold fetch.
 
 SKILL.md remains the default and simpler integration method. Use MCP when you want native tool semantics without shell command parsing.

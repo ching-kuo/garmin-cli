@@ -17,6 +17,7 @@ from garmin_cli.output import (
     echo_table,
     make_envelope,
     make_error_envelope,
+    render_capability_footnote,
 )
 
 
@@ -311,3 +312,44 @@ class TestFormatCell:
 
     def test_numeric_value(self) -> None:
         assert _format_cell(42) == "42"
+
+
+# ---------------------------------------------------------------------------
+# render_capability_footnote (U11)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderCapabilityFootnote:
+
+    def test_zero_counts_returns_none(self) -> None:
+        assert render_capability_footnote(0, 0) is None
+
+    def test_only_not_applicable(self) -> None:
+        text = render_capability_footnote(12, 0)
+        assert text is not None
+        assert "12 metrics not applicable" in text
+        assert "unexpectedly absent" not in text
+
+    def test_only_absent(self) -> None:
+        text = render_capability_footnote(0, 3)
+        assert text is not None
+        assert "3 metrics unexpectedly absent" in text
+        assert "not applicable" not in text
+
+    def test_both_counts(self) -> None:
+        text = render_capability_footnote(12, 1)
+        assert text is not None
+        assert "12 metrics not applicable" in text
+        assert "1 metric unexpectedly absent" in text
+
+    def test_singular_not_applicable(self) -> None:
+        text = render_capability_footnote(1, 0)
+        assert "1 metric not applicable" in text
+
+    def test_singular_absent(self) -> None:
+        text = render_capability_footnote(0, 1)
+        assert "1 metric unexpectedly absent" in text
+
+    def test_starts_with_note_prefix(self) -> None:
+        text = render_capability_footnote(2, 0)
+        assert text.startswith("Note:")

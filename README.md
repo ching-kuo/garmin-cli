@@ -121,11 +121,43 @@ garmin-cli health status      [--date DATE]
 
 ```bash
 garmin-cli activity list    [--limit N] [--type TYPE] [--search TEXT] [--date DATE | --from DATE --to DATE | --days N]
-garmin-cli activity get     ACTIVITY_ID [--detail]  # --detail/-d shows power, cadence, elevation, etc.
+garmin-cli activity get     ACTIVITY_ID [--detail] [--laps]  # --detail/-d shows sport-aware metrics; --laps appends lap data
+garmin-cli activity laps    ACTIVITY_ID  # per-lap rows (run/bike) or per-pool-length rows (lap_swimming)
+garmin-cli activity zones   ACTIVITY_ID  # HR time-in-zone breakdown
 garmin-cli activity weather ACTIVITY_ID
 ```
 
 `--limit` defaults to 20, max 100. `--type` filters by activity type key (e.g., `running`, `cycling`).
+
+#### Detailed sport-specific metrics
+
+`activity get --detail` projects metrics scoped by the activity's sport:
+
+| Sport | Detail-mode metrics (in addition to base summary, HR, calories, elevation, speed) |
+|-------|-----------------------------------------------------------------------------------|
+| Cycling | avg/max/normalized power, cadence (rpm), TSS, intensity factor, training effect, vO2max, recovery time |
+| Running | cadence (spm), ground contact time, vertical oscillation/ratio, stride length, training effect, vO2max, recovery time |
+| Lap swimming | SWOLF, total strokes, average stroke rate, distance per stroke |
+| Open water swimming | universal extras only (no per-length stroke metrics) |
+
+JSON and CSV output use a stable union schema — every key is present (with `null` for sport-inapplicable metrics) so downstream parsers see a stable shape. Table output is sport-aware: only sport-applicable columns appear, keeping tables dense.
+
+When `--detail` is set, JSON also carries an `unavailable` array describing which registry-known metrics are not produced for this activity. Each entry has `field`, `reason` (`not_applicable_to_sport` or `absent_in_response`), and `leg_index` (set on multisport child contributions). Table output prints a single counts-only footnote; CSV output stays a flat tabular format and does not carry the manifest.
+
+```bash
+# Cycling detail
+garmin-cli activity get 12345678 --detail
+
+# Running detail with HR zones
+garmin-cli activity get 12345678 --detail
+garmin-cli activity zones 12345678
+
+# Pool-swim per-length rows (auto-routes to typed_splits)
+garmin-cli activity laps 12345678
+
+# Cycling detail + lap power suite in one envelope
+garmin-cli --json activity get 12345678 --detail --laps
+```
 
 ### Workouts
 

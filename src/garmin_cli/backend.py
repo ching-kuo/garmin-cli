@@ -185,3 +185,21 @@ def schedule_workout(workout_id: int | str, schedule_date: date | str) -> dict[s
     client = _require_backend()
     date_str = schedule_date if isinstance(schedule_date, str) else schedule_date.isoformat()
     return client.schedule_workout(workout_id, date_str)
+
+
+def get_activity_typed_splits(activity_id: int | str) -> Any:
+    """Use the typed upstream typed-splits helper (per-pool-length swim data)."""
+    client = _require_backend()
+    return client.get_activity_typed_splits(activity_id)
+
+
+def get_activity_details(activity_id: int | str) -> Any:
+    """Use the typed upstream activity-details helper (metric stream + descriptors)."""
+    client = _require_backend()
+    return client.get_activity_details(activity_id)
+
+
+def get_activity_hr_in_timezones(activity_id: int | str) -> Any:
+    """Use the typed upstream HR-time-in-zone helper."""
+    client = _require_backend()
+    return client.get_activity_hr_in_timezones(activity_id)

@@ -9,21 +9,48 @@ from garmin_cli.auth import ensure_authenticated
 from garmin_cli.date_utils import CLICK_DATE_TYPE, resolve_click_dates
 from garmin_cli.endpoints.activities import (
     get_activity,
+    get_activity_hr_in_timezones,
+    get_activity_splits,
+    get_activity_typed_splits,
     get_activity_weather,
     get_multisport_children,
     is_multisport_parent,
     list_activities,
 )
-from garmin_cli.output import echo_csv, echo_json, echo_table, make_envelope, render_output
+from garmin_cli.metrics.registry import LAP_SWIM_TYPE_KEYS
+from garmin_cli.metrics.sport_profile import SportProfile, profile_for
+from garmin_cli.output import (
+    echo_csv,
+    echo_json,
+    echo_table,
+    make_envelope,
+    render_capability_footnote,
+    render_output,
+)
 from garmin_cli.serializers import (
     COLUMNS_ACTIVITY_DETAIL,
+    COLUMNS_ACTIVITY_HR_ZONES,
     COLUMNS_ACTIVITY_SUMMARY,
     COLUMNS_ACTIVITY_WEATHER,
     COLUMNS_MULTISPORT_CHILDREN,
+    columns_for_lap,
+    columns_for_sport,
+    manifest_summary_counts,
     serialize_activity_detail,
+    serialize_activity_hr_zones,
+    serialize_activity_laps,
     serialize_activity_summary,
+    serialize_capability_manifest,
     serialize_multisport_children,
 )
+
+
+def _activity_type_key(raw: dict) -> str | None:
+    activity_type = raw.get("activityType") if isinstance(raw, dict) else None
+    if isinstance(activity_type, dict):
+        return activity_type.get("typeKey")
+    return None
+
 
 _DATE_TYPE = CLICK_DATE_TYPE
 
@@ -71,43 +98,158 @@ def list_cmd(
     )
 
 
+def _fetch_one_activity_laps(raw: dict, activity_id: object) -> tuple[list[dict], SportProfile]:
+    """Fetch laps for a single (non-multisport) activity, auto-routing by sport.
+
+    pool-swim activities use the typed_splits endpoint to get per-pool-length
+    rows; everything else uses the raw-URL splits endpoint.
+    """
+    type_key = _activity_type_key(raw)
+    profile = profile_for(type_key)
+    if profile.type_keys & LAP_SWIM_TYPE_KEYS:
+        splits_payload = get_activity_typed_splits(activity_id)
+    else:
+        splits_payload = get_activity_splits(activity_id)
+    rows = serialize_activity_laps(raw, splits_payload, profile)
+    return rows, profile
+
+
+def _fetch_laps_for_activity(raw: dict, activity_id: str) -> tuple[list[dict], SportProfile]:
+    """Fetch laps for an activity, handling multisport parents.
+
+    For multisport parents, iterates child legs, fetches each child's laps,
+    and stamps ``leg_index`` (0-based) onto every returned row. The returned
+    profile is the parent's profile (for table column hint); per-row
+    sport-specificity remains intact via the columns each row carries.
+    """
+    if is_multisport_parent(raw):
+        children = get_multisport_children(raw)
+        if children:
+            all_rows: list[dict] = []
+            for idx, child in enumerate(children):
+                child_id = child.get("activityId")
+                if child_id is None:
+                    continue
+                child_rows, _ = _fetch_one_activity_laps(child, child_id)
+                for row in child_rows:
+                    row["leg_index"] = idx
+                all_rows.extend(child_rows)
+            return all_rows, profile_for(_activity_type_key(raw))
+    return _fetch_one_activity_laps(raw, activity_id)
+
+
 @activity.command("get")
 @click.argument("activity_id")
 @click.option("--detail", "-d", is_flag=True, default=False)
+@click.option("--laps", "include_laps", is_flag=True, default=False,
+              help="Include lap-by-lap data (auto-routes pool swim to per-pool-length).")
 @click.pass_context
-def get_cmd(ctx: click.Context, activity_id: str, detail: bool) -> None:
+def get_cmd(ctx: click.Context, activity_id: str, detail: bool, include_laps: bool) -> None:
     """Get a single activity by ID. For multisport activities, shows each child sport."""
     ensure_authenticated(ctx.obj["config"])
     raw = get_activity(activity_id)
     fmt = ctx.obj["config"].output_format
     data = serialize_activity_detail(raw) if detail else serialize_activity_summary(raw)
-    columns = COLUMNS_ACTIVITY_DETAIL if detail else COLUMNS_ACTIVITY_SUMMARY
 
+    if detail:
+        # CSV uses the stable union schema; tables use sport-aware ordering so
+        # only sport-applicable columns appear (no clutter of empty cells).
+        type_key = _activity_type_key(raw)
+        csv_columns = COLUMNS_ACTIVITY_DETAIL
+        table_columns = columns_for_sport(type_key)
+    else:
+        csv_columns = COLUMNS_ACTIVITY_SUMMARY
+        table_columns = COLUMNS_ACTIVITY_SUMMARY
+
+    children_raw: list[dict] = []
     child_data: list[dict] = []
     if is_multisport_parent(raw):
-        children = get_multisport_children(raw)
-        if children:
-            child_data = serialize_multisport_children(children)
+        fetched = get_multisport_children(raw)
+        if fetched:
+            children_raw = fetched
+            child_data = serialize_multisport_children(fetched)
+
+    laps_rows: list[dict] = []
+    laps_profile = None
+    if include_laps:
+        laps_rows, laps_profile = _fetch_laps_for_activity(raw, activity_id)
+
+    # Capability manifest: only when --detail is set. Multisport parent
+    # envelopes union per-child manifests with leg_index attached.
+    manifest: list[dict] = []
+    if detail:
+        if children_raw:
+            for idx, child in enumerate(children_raw):
+                child_row = serialize_activity_detail(child)
+                child_projected = child_row[0] if child_row else None
+                manifest.extend(serialize_capability_manifest(
+                    child, child_projected, leg_index=idx,
+                ))
+        else:
+            projected = data[0] if data else None
+            manifest = serialize_capability_manifest(raw, projected)
 
     if fmt == "json":
         envelope = make_envelope(command="activity get", data=data)
         if child_data:
             envelope["children"] = child_data
+        if include_laps:
+            envelope["laps"] = laps_rows
+        if manifest:
+            envelope["unavailable"] = manifest
         echo_json(envelope)
     elif fmt == "table":
-        echo_table(data, columns)
+        echo_table(data, table_columns)
         if child_data:
             click.echo("")
             click.echo("Child activities:")
             echo_table(child_data, COLUMNS_MULTISPORT_CHILDREN)
+        if include_laps:
+            click.echo("")
+            click.echo("Laps:")
+            echo_table(laps_rows, columns_for_lap(laps_profile))
+        if manifest:
+            footnote = render_capability_footnote(*manifest_summary_counts(manifest))
+            if footnote:
+                click.echo("")
+                click.echo(footnote)
     else:
+        # CSV: parent rows + (optionally) children rows + (optionally) laps rows
+        # Manifest is intentionally omitted from CSV output (back-compat).
         if child_data:
             if detail:
-                echo_csv(data, columns)
+                echo_csv(data, csv_columns)
                 click.echo("")
             echo_csv(child_data, COLUMNS_MULTISPORT_CHILDREN)
         else:
-            echo_csv(data, columns)
+            echo_csv(data, csv_columns)
+        if include_laps:
+            click.echo("")
+            lap_columns = columns_for_lap(laps_profile)
+            echo_csv(laps_rows, lap_columns)
+
+
+@activity.command("laps")
+@click.argument("activity_id")
+@click.pass_context
+def laps_cmd(ctx: click.Context, activity_id: str) -> None:
+    """Get lap-by-lap data for an activity (per-pool-length for pool swim)."""
+    ensure_authenticated(ctx.obj["config"])
+    raw = get_activity(activity_id)
+    rows, profile = _fetch_laps_for_activity(raw, activity_id)
+    columns = columns_for_lap(profile)
+    render_output(ctx.obj["config"].output_format, "activity laps", rows, columns)
+
+
+@activity.command("zones")
+@click.argument("activity_id")
+@click.pass_context
+def zones_cmd(ctx: click.Context, activity_id: str) -> None:
+    """Get HR time-in-zone breakdown for an activity."""
+    ensure_authenticated(ctx.obj["config"])
+    raw = get_activity_hr_in_timezones(activity_id)
+    rows = serialize_activity_hr_zones(raw)
+    render_output(ctx.obj["config"].output_format, "activity zones", rows, COLUMNS_ACTIVITY_HR_ZONES)
 
 
 @activity.command("weather")

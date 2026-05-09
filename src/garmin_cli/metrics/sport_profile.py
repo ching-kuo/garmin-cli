@@ -1,0 +1,234 @@
+"""Sport profiles: per-sport configuration of which metrics to project.
+
+Each profile maps a family of typeKeys (e.g., running variants) to the
+registry keys that make sense for that sport. ``profile_for(typeKey)``
+returns the matching profile or ``DEFAULT_PROFILE`` for unknown sports.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from garmin_cli.metrics.registry import (
+    CYCLING_TYPE_KEYS,
+    LAP_SWIM_TYPE_KEYS,
+    OW_SWIM_TYPE_KEYS,
+    REGISTRY,
+    RUNNING_TYPE_KEYS,
+)
+
+
+@dataclass(frozen=True)
+class SportProfile:
+    """Per-sport projection plan for the activity-detail surface."""
+
+    type_keys: frozenset[str]
+    is_pace_sport: bool
+    summary_metrics: tuple[str, ...]
+    standard_metrics: tuple[str, ...]
+    deep_metrics: tuple[str, ...] = ()
+
+    def detail_metrics(self) -> tuple[str, ...]:
+        """Concatenated summary + standard + deep keys (order preserved)."""
+        return self.summary_metrics + self.standard_metrics + self.deep_metrics
+
+
+_BASE_SUMMARY_KEYS: tuple[str, ...] = (
+    "id",
+    "date",
+    "name",
+    "type",
+    "distance_km",
+    "duration_min",
+    "avg_hr",
+)
+
+
+_UNIVERSAL_STANDARD_KEYS: tuple[str, ...] = (
+    "max_hr",
+    "calories",
+    "elevation_gain_m",
+    "elevation_loss_m",
+    "avg_speed_kmh",
+    "max_speed_kmh",
+)
+
+
+_RUN_BIKE_TRAINING_RESPONSE: tuple[str, ...] = (
+    "aerobic_training_effect",
+    "anaerobic_training_effect",
+    "vo2max",
+    "recovery_time_h",
+)
+
+
+CYCLING_PROFILE = SportProfile(
+    type_keys=CYCLING_TYPE_KEYS,
+    is_pace_sport=False,
+    summary_metrics=_BASE_SUMMARY_KEYS,
+    standard_metrics=_UNIVERSAL_STANDARD_KEYS + (
+        "avg_cadence_rpm",
+        "avg_power_w",
+        "max_power_w",
+        "norm_power_w",
+        "tss",
+        "intensity_factor",
+    ) + _RUN_BIKE_TRAINING_RESPONSE,
+)
+
+
+RUNNING_PROFILE = SportProfile(
+    type_keys=RUNNING_TYPE_KEYS,
+    is_pace_sport=True,
+    summary_metrics=_BASE_SUMMARY_KEYS,
+    standard_metrics=_UNIVERSAL_STANDARD_KEYS + (
+        "avg_cadence_spm",
+        "avg_ground_contact_time",
+        "avg_vertical_oscillation",
+        "avg_vertical_ratio",
+        "avg_stride_length",
+    ) + _RUN_BIKE_TRAINING_RESPONSE,
+)
+
+
+LAP_SWIM_PROFILE = SportProfile(
+    type_keys=LAP_SWIM_TYPE_KEYS,
+    is_pace_sport=True,
+    summary_metrics=_BASE_SUMMARY_KEYS,
+    standard_metrics=_UNIVERSAL_STANDARD_KEYS + (
+        "swolf",
+        "total_strokes",
+        "avg_stroke_rate",
+        "distance_per_stroke",
+    ),
+)
+
+
+OPEN_WATER_SWIM_PROFILE = SportProfile(
+    type_keys=OW_SWIM_TYPE_KEYS,
+    is_pace_sport=True,
+    summary_metrics=_BASE_SUMMARY_KEYS,
+    # OWS has no per-length stroke aggregates and no SWOLF
+    standard_metrics=_UNIVERSAL_STANDARD_KEYS,
+)
+
+
+MULTI_SPORT_PROFILE = SportProfile(
+    type_keys=frozenset({"multi_sport", "multisport"}),
+    is_pace_sport=False,
+    summary_metrics=_BASE_SUMMARY_KEYS,
+    standard_metrics=_UNIVERSAL_STANDARD_KEYS,
+)
+
+
+DEFAULT_PROFILE = SportProfile(
+    type_keys=frozenset(),  # matches no specific typeKey; used as fallback
+    is_pace_sport=False,
+    summary_metrics=_BASE_SUMMARY_KEYS,
+    standard_metrics=_UNIVERSAL_STANDARD_KEYS,
+)
+
+
+PROFILES: tuple[SportProfile, ...] = (
+    RUNNING_PROFILE,
+    CYCLING_PROFILE,
+    LAP_SWIM_PROFILE,
+    OPEN_WATER_SWIM_PROFILE,
+    MULTI_SPORT_PROFILE,
+)
+
+
+def profile_for(type_key: str | None) -> SportProfile:
+    """Return the sport profile matching ``type_key`` or ``DEFAULT_PROFILE``."""
+    if type_key is None:
+        return DEFAULT_PROFILE
+    for profile in PROFILES:
+        if type_key in profile.type_keys:
+            return profile
+    return DEFAULT_PROFILE
+
+
+# --- Union schema ------------------------------------------------------------
+
+# Stable union-schema column order for activity-detail output.
+# Cycling-leaning legacy positions are preserved verbatim; new sport-specific
+# columns are appended in fixed order. Once published, ordering is back-compat
+# critical: existing CSV pipelines must not see legacy columns reordered.
+
+_LEGACY_DETAIL_ORDER: tuple[str, ...] = (
+    # base summary (legacy positions 1-7)
+    "id",
+    "date",
+    "name",
+    "type",
+    "distance_km",
+    "duration_min",
+    "avg_hr",
+    # universal extras (legacy positions 8-13)
+    "max_hr",
+    "calories",
+    "elevation_gain_m",
+    "elevation_loss_m",
+    "avg_speed_kmh",
+    "max_speed_kmh",
+    # cadence (legacy positions 14-15)
+    "avg_cadence_spm",
+    "avg_cadence_rpm",
+    # cycling power suite (legacy positions 16-20)
+    "avg_power_w",
+    "max_power_w",
+    "norm_power_w",
+    "tss",
+    "intensity_factor",
+)
+
+_RUNNING_APPENDED: tuple[str, ...] = (
+    "avg_ground_contact_time",
+    "avg_vertical_oscillation",
+    "avg_vertical_ratio",
+    "avg_stride_length",
+)
+
+_RUN_BIKE_TRAINING_APPENDED: tuple[str, ...] = _RUN_BIKE_TRAINING_RESPONSE
+
+_SWIM_APPENDED: tuple[str, ...] = (
+    "swolf",
+    "total_strokes",
+    "avg_stroke_rate",
+    "distance_per_stroke",
+)
+
+
+UNION_COLUMNS: tuple[str, ...] = (
+    _LEGACY_DETAIL_ORDER
+    + _RUNNING_APPENDED
+    + _RUN_BIKE_TRAINING_APPENDED
+    + _SWIM_APPENDED
+)
+
+
+def union_columns() -> tuple[str, ...]:
+    """Return the stable union-schema column order for activity detail output."""
+    return UNION_COLUMNS
+
+
+def columns_for_sport(type_key: str | None) -> tuple[str, ...]:
+    """Return the table column order for ``type_key`` (sport-aware)."""
+    return profile_for(type_key).detail_metrics()
+
+
+# Sanity guard: every key referenced by any profile must exist in REGISTRY.
+def _validate_registry_coverage() -> None:
+    for profile in PROFILES + (DEFAULT_PROFILE,):
+        for key in profile.detail_metrics():
+            if key not in REGISTRY:
+                raise RuntimeError(
+                    f"SportProfile references unknown metric key: {key!r}"
+                )
+    for key in UNION_COLUMNS:
+        if key not in REGISTRY:
+            raise RuntimeError(
+                f"UNION_COLUMNS references unknown metric key: {key!r}"
+            )
+
+
+_validate_registry_coverage()

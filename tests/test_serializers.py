@@ -987,3 +987,543 @@ class TestSerializeActivityDetail:
         assert result[0]["distance_km"] == pytest.approx(10.0, rel=0.01)
         assert result[0]["duration_min"] == pytest.approx(60.0, rel=0.01)
         assert result[0]["avg_hr"] == 155
+
+
+# ---------------------------------------------------------------------------
+# Sport-aware activity detail (U4): union schema + sport-specific projection
+# ---------------------------------------------------------------------------
+
+
+class TestSportAwareActivityDetail:
+    """Detail rows must contain every UNION_COLUMNS key regardless of sport."""
+
+    def test_cycling_row_has_union_keys_with_running_swim_as_none(self) -> None:
+        from garmin_cli.serializers import COLUMNS_ACTIVITY_DETAIL, serialize_activity_detail
+        raw = {
+            "activityId": 100,
+            "activityType": {"typeKey": "cycling"},
+            "averagePower": 220.0,
+            "normPower": 240.0,
+        }
+        row = serialize_activity_detail(raw)[0]
+        # every union column is present
+        assert set(row.keys()) == set(COLUMNS_ACTIVITY_DETAIL)
+        # cycling values populated
+        assert row["avg_power_w"] == pytest.approx(220.0)
+        assert row["norm_power_w"] == pytest.approx(240.0)
+        # running-only & swim-only keys are present but null
+        for key in ("avg_ground_contact_time", "avg_vertical_oscillation",
+                    "avg_stride_length", "swolf", "total_strokes"):
+            assert key in row
+            assert row[key] is None
+
+    def test_running_projects_running_dynamics(self) -> None:
+        from garmin_cli.serializers import serialize_activity_detail
+        raw = {
+            "activityId": 200,
+            "activityType": {"typeKey": "running"},
+            "averageRunningCadenceInStepsPerMinute": 180.0,
+            "avgGroundContactTime": 240,
+            "avgVerticalOscillation": 8.4,
+            "avgVerticalRatio": 6.5,
+            "avgStrideLength": 132.0,
+            "aerobicTrainingEffect": 3.2,
+            "anaerobicTrainingEffect": 1.4,
+        }
+        row = serialize_activity_detail(raw)[0]
+        assert row["avg_cadence_spm"] == pytest.approx(180.0)
+        assert row["avg_ground_contact_time"] == 240
+        assert row["avg_vertical_oscillation"] == pytest.approx(8.4)
+        assert row["avg_vertical_ratio"] == pytest.approx(6.5)
+        assert row["avg_stride_length"] == pytest.approx(132.0)
+        assert row["aerobic_training_effect"] == pytest.approx(3.2)
+        assert row["anaerobic_training_effect"] == pytest.approx(1.4)
+        # cycling power should remain null
+        assert row["avg_power_w"] is None
+        assert row["norm_power_w"] is None
+        assert row["tss"] is None
+
+    def test_lap_swim_projects_swim_metrics(self) -> None:
+        from garmin_cli.serializers import serialize_activity_detail
+        raw = {
+            "activityId": 300,
+            "activityType": {"typeKey": "lap_swimming"},
+            "avgSwolf": 38,
+            "strokes": 720,
+            "averageStrokeRate": 28.5,
+            "avgStrokeDistance": 1.85,
+        }
+        row = serialize_activity_detail(raw)[0]
+        assert row["swolf"] == 38
+        assert row["total_strokes"] == 720
+        assert row["avg_stroke_rate"] == pytest.approx(28.5)
+        assert row["distance_per_stroke"] == pytest.approx(1.85)
+        # cycling/running keys remain null
+        assert row["avg_power_w"] is None
+        assert row["avg_ground_contact_time"] is None
+
+    def test_summary_dto_fallback_for_running_dynamics(self) -> None:
+        from garmin_cli.serializers import serialize_activity_detail
+        raw = {
+            "activityId": 201,
+            "activityType": {"typeKey": "running"},
+            "summaryDTO": {
+                "avgGroundContactTime": 250,
+                "avgVerticalOscillation": 9.0,
+            },
+        }
+        row = serialize_activity_detail(raw)[0]
+        assert row["avg_ground_contact_time"] == 250
+        assert row["avg_vertical_oscillation"] == pytest.approx(9.0)
+
+    def test_unknown_sport_falls_back_to_universal_only(self) -> None:
+        from garmin_cli.serializers import serialize_activity_detail
+        raw = {
+            "activityId": 999,
+            "activityType": {"typeKey": "weightlifting"},
+            "calories": 200,
+            "maxHR": 150,
+        }
+        row = serialize_activity_detail(raw)[0]
+        # universal keys populated
+        assert row["calories"] == 200
+        assert row["max_hr"] == 150
+        # sport-specific keys remain null
+        assert row["avg_power_w"] is None
+        assert row["avg_ground_contact_time"] is None
+        assert row["swolf"] is None
+
+    def test_missing_activity_type_uses_default(self) -> None:
+        from garmin_cli.serializers import serialize_activity_detail
+        raw = {"activityId": 1, "calories": 100}
+        row = serialize_activity_detail(raw)[0]
+        assert row["calories"] == 100
+        # all sport-specific keys are present and null
+        assert row["avg_power_w"] is None
+        assert row["swolf"] is None
+
+
+class TestColumnsForSportInSerializers:
+
+    def test_columns_for_sport_importable_from_serializers(self) -> None:
+        from garmin_cli.serializers import columns_for_sport
+        cycling_cols = columns_for_sport("cycling")
+        assert "avg_power_w" in cycling_cols
+        assert "avg_ground_contact_time" not in cycling_cols
+
+    def test_union_columns_importable_from_serializers(self) -> None:
+        from garmin_cli.serializers import union_columns, COLUMNS_ACTIVITY_DETAIL
+        assert union_columns() == COLUMNS_ACTIVITY_DETAIL
+
+
+# ---------------------------------------------------------------------------
+# Activity laps serializer (U7)
+# ---------------------------------------------------------------------------
+
+
+class TestSerializeActivityLaps:
+
+    def test_cycling_laps_populate_power_columns(self) -> None:
+        from garmin_cli.serializers import serialize_activity_laps
+        activity = {"activityType": {"typeKey": "cycling"}}
+        splits = {
+            "lapDTOs": [
+                {
+                    "duration": 600.0, "distance": 5000.0,
+                    "averageHR": 145, "maxHR": 165,
+                    "averagePower": 220, "maxPower": 480, "normalizedPower": 235,
+                },
+                {
+                    "duration": 540.0, "distance": 4500.0,
+                    "averageHR": 152, "maxHR": 172,
+                    "averagePower": 240, "maxPower": 510, "normalizedPower": 250,
+                },
+            ],
+        }
+        rows = serialize_activity_laps(activity, splits)
+        assert len(rows) == 2
+        assert rows[0]["lap_index"] == 1
+        assert rows[1]["lap_index"] == 2
+        assert rows[0]["avg_power_w"] == 220
+        assert rows[0]["norm_power_w"] == 235
+        assert rows[0]["distance_km"] == pytest.approx(5.0, rel=0.01)
+        assert rows[0]["duration_min"] == pytest.approx(10.0, rel=0.01)
+        # running fields are present but null for cycling laps
+        for key in ("avg_ground_contact_time", "avg_vertical_oscillation",
+                    "avg_vertical_ratio", "avg_stride_length"):
+            assert key in rows[0]
+            assert rows[0][key] is None
+
+    def test_running_laps_populate_dynamics_columns(self) -> None:
+        from garmin_cli.serializers import serialize_activity_laps
+        activity = {"activityType": {"typeKey": "running"}}
+        splits = {
+            "lapDTOs": [
+                {
+                    "duration": 480.0, "distance": 1000.0,
+                    "averageHR": 162, "maxHR": 175,
+                    "avgGroundContactTime": 235, "avgVerticalOscillation": 8.2,
+                    "avgVerticalRatio": 6.1, "avgStrideLength": 130.0,
+                },
+            ],
+        }
+        rows = serialize_activity_laps(activity, splits)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["avg_ground_contact_time"] == 235
+        assert row["avg_vertical_oscillation"] == pytest.approx(8.2)
+        assert row["avg_vertical_ratio"] == pytest.approx(6.1)
+        assert row["avg_stride_length"] == pytest.approx(130.0)
+        # cycling power fields present but null
+        assert row["avg_power_w"] is None
+        assert row["norm_power_w"] is None
+
+    def test_lap_swimming_returns_per_pool_length_rows(self) -> None:
+        from garmin_cli.serializers import serialize_activity_laps
+        activity = {"activityType": {"typeKey": "lap_swimming"}}
+        typed_splits = {
+            "lengthDTOs": [
+                {"duration": 25.0, "distance": 25.0, "swolf": 38, "swimStroke": "FREESTYLE",
+                 "strokes": 14, "averageSwimCadenceInStrokesPerMinute": 30.0},
+                {"duration": 26.0, "distance": 25.0, "swolf": 39, "swimStroke": "FREESTYLE",
+                 "strokes": 15, "averageSwimCadenceInStrokesPerMinute": 31.0},
+                {"duration": 28.0, "distance": 25.0, "swolf": 40, "swimStroke": "BACKSTROKE",
+                 "strokes": 16, "averageSwimCadenceInStrokesPerMinute": 33.0},
+            ],
+        }
+        rows = serialize_activity_laps(activity, typed_splits)
+        assert len(rows) == 3
+        assert rows[0]["lap_index"] == 1
+        assert rows[0]["swolf"] == 38
+        assert rows[0]["stroke_type"] == "FREESTYLE"
+        assert rows[0]["strokes"] == 14
+        assert rows[0]["avg_stroke_rate"] == 30.0
+        assert rows[2]["stroke_type"] == "BACKSTROKE"
+
+    def test_open_water_swim_uses_lap_dtos_not_length_dtos(self) -> None:
+        from garmin_cli.serializers import serialize_activity_laps
+        activity = {"activityType": {"typeKey": "open_water_swimming"}}
+        splits = {
+            "lapDTOs": [
+                {"duration": 600.0, "distance": 1000.0, "averageHR": 140},
+            ],
+        }
+        rows = serialize_activity_laps(activity, splits)
+        assert len(rows) == 1
+        assert rows[0]["distance_km"] == pytest.approx(1.0)
+        assert rows[0]["avg_hr"] == 140
+        # OWS uses run/bike shape (no swolf/strokes columns)
+        assert "swolf" not in rows[0]
+
+    def test_empty_payload_returns_empty_list(self) -> None:
+        from garmin_cli.serializers import serialize_activity_laps
+        assert serialize_activity_laps({"activityType": {"typeKey": "cycling"}}, {}) == []
+        assert serialize_activity_laps({}, None) == []
+        assert serialize_activity_laps({}, {"lapDTOs": []}) == []
+
+    def test_missing_power_fields_are_null(self) -> None:
+        from garmin_cli.serializers import serialize_activity_laps
+        activity = {"activityType": {"typeKey": "cycling"}}
+        splits = {"lapDTOs": [{"duration": 600.0, "distance": 5000.0, "averageHR": 145}]}
+        row = serialize_activity_laps(activity, splits)[0]
+        assert row["avg_power_w"] is None
+        assert row["max_power_w"] is None
+        assert row["norm_power_w"] is None
+        # base fields populated
+        assert row["avg_hr"] == 145
+
+    def test_unknown_sport_falls_through_to_lap_dtos(self) -> None:
+        from garmin_cli.serializers import serialize_activity_laps
+        activity = {"activityType": {"typeKey": "weightlifting"}}
+        splits = {"lapDTOs": [{"duration": 60.0, "distance": 0.0, "averageHR": 130}]}
+        rows = serialize_activity_laps(activity, splits)
+        assert len(rows) == 1
+        assert rows[0]["avg_hr"] == 130
+
+
+class TestColumnsForLap:
+
+    def test_swim_returns_swim_columns(self) -> None:
+        from garmin_cli.metrics.sport_profile import LAP_SWIM_PROFILE
+        from garmin_cli.serializers import COLUMNS_ACTIVITY_LAPS_SWIM, columns_for_lap
+        assert columns_for_lap(LAP_SWIM_PROFILE) == COLUMNS_ACTIVITY_LAPS_SWIM
+
+    def test_cycling_returns_cycling_columns(self) -> None:
+        from garmin_cli.metrics.sport_profile import CYCLING_PROFILE
+        from garmin_cli.serializers import COLUMNS_ACTIVITY_LAPS_CYCLING, columns_for_lap
+        cols = columns_for_lap(CYCLING_PROFILE)
+        assert cols == COLUMNS_ACTIVITY_LAPS_CYCLING
+        assert "avg_power_w" in cols
+        assert "avg_ground_contact_time" not in cols
+
+    def test_running_returns_running_columns(self) -> None:
+        from garmin_cli.metrics.sport_profile import RUNNING_PROFILE
+        from garmin_cli.serializers import COLUMNS_ACTIVITY_LAPS_RUNNING, columns_for_lap
+        cols = columns_for_lap(RUNNING_PROFILE)
+        assert cols == COLUMNS_ACTIVITY_LAPS_RUNNING
+        assert "avg_ground_contact_time" in cols
+        assert "avg_power_w" not in cols
+
+    def test_default_returns_run_bike_union(self) -> None:
+        from garmin_cli.metrics.sport_profile import DEFAULT_PROFILE
+        from garmin_cli.serializers import COLUMNS_ACTIVITY_LAPS_RUN_BIKE, columns_for_lap
+        assert columns_for_lap(DEFAULT_PROFILE) == COLUMNS_ACTIVITY_LAPS_RUN_BIKE
+
+
+# ---------------------------------------------------------------------------
+# Activity HR zones serializer (U9)
+# ---------------------------------------------------------------------------
+
+
+class TestSerializeActivityHrZones:
+
+    def test_returns_one_row_per_zone(self) -> None:
+        from garmin_cli.serializers import serialize_activity_hr_zones
+        zones = [
+            {"zoneNumber": 1, "zoneLowBoundary": 90, "zoneHighBoundary": 109, "secsInZone": 600},
+            {"zoneNumber": 2, "zoneLowBoundary": 110, "zoneHighBoundary": 129, "secsInZone": 1200},
+            {"zoneNumber": 3, "zoneLowBoundary": 130, "zoneHighBoundary": 149, "secsInZone": 1800},
+            {"zoneNumber": 4, "zoneLowBoundary": 150, "zoneHighBoundary": 169, "secsInZone": 900},
+            {"zoneNumber": 5, "zoneLowBoundary": 170, "zoneHighBoundary": 200, "secsInZone": 300},
+        ]
+        rows = serialize_activity_hr_zones(zones)
+        assert len(rows) == 5
+        assert rows[0]["zone"] == 1
+        assert rows[0]["zone_low_bpm"] == 90
+        assert rows[0]["zone_high_bpm"] == 109
+        assert rows[0]["minutes_in_zone"] == pytest.approx(10.0)
+        assert rows[0]["seconds_in_zone"] == 600
+
+    def test_sorts_by_zone_number(self) -> None:
+        from garmin_cli.serializers import serialize_activity_hr_zones
+        zones = [
+            {"zoneNumber": 3, "secsInZone": 900},
+            {"zoneNumber": 1, "secsInZone": 300},
+            {"zoneNumber": 2, "secsInZone": 600},
+        ]
+        rows = serialize_activity_hr_zones(zones)
+        assert [r["zone"] for r in rows] == [1, 2, 3]
+
+    def test_empty_returns_empty(self) -> None:
+        from garmin_cli.serializers import serialize_activity_hr_zones
+        assert serialize_activity_hr_zones([]) == []
+        assert serialize_activity_hr_zones(None) == []
+
+    def test_zero_seconds_emits_row_with_zero_minutes(self) -> None:
+        from garmin_cli.serializers import serialize_activity_hr_zones
+        rows = serialize_activity_hr_zones([{"zoneNumber": 5, "secsInZone": 0}])
+        assert len(rows) == 1
+        assert rows[0]["minutes_in_zone"] == 0.0
+
+    def test_missing_boundaries_yield_none(self) -> None:
+        from garmin_cli.serializers import serialize_activity_hr_zones
+        rows = serialize_activity_hr_zones([{"zoneNumber": 1, "secsInZone": 60}])
+        assert rows[0]["zone_low_bpm"] is None
+        assert rows[0]["zone_high_bpm"] is None
+        assert rows[0]["minutes_in_zone"] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Metrics descriptors (U12)
+# ---------------------------------------------------------------------------
+
+
+class TestSerializeCapabilityManifest:
+    """U11: capability manifest covers full registry union with two reasons."""
+
+    def test_cycling_with_power_omits_power_from_manifest(self) -> None:
+        from garmin_cli.serializers import (
+            MANIFEST_REASON_ABSENT,
+            MANIFEST_REASON_NOT_APPLICABLE,
+            serialize_activity_detail,
+            serialize_capability_manifest,
+        )
+        raw = {
+            "activityId": 1, "activityType": {"typeKey": "cycling"},
+            "averagePower": 220.0, "normPower": 240.0, "maxPower": 600.0,
+            "trainingStressScore": 95.0, "intensityFactor": 0.88,
+        }
+        projected = serialize_activity_detail(raw)[0]
+        manifest = serialize_capability_manifest(raw, projected)
+        fields = {entry["field"]: entry["reason"] for entry in manifest}
+        # cycling values present → not in manifest
+        for key in ("avg_power_w", "norm_power_w", "tss", "intensity_factor"):
+            assert key not in fields
+        # running and swim metrics tagged not_applicable_to_sport
+        for key in ("avg_ground_contact_time", "avg_stride_length", "swolf", "total_strokes"):
+            assert fields.get(key) == MANIFEST_REASON_NOT_APPLICABLE
+
+    def test_cycling_without_ftp_marks_tss_absent(self) -> None:
+        from garmin_cli.serializers import (
+            MANIFEST_REASON_ABSENT,
+            serialize_activity_detail,
+            serialize_capability_manifest,
+        )
+        raw = {
+            "activityId": 1, "activityType": {"typeKey": "cycling"},
+            "averagePower": 220.0,  # NP, IF, TSS unset (no FTP)
+        }
+        projected = serialize_activity_detail(raw)[0]
+        manifest = serialize_capability_manifest(raw, projected)
+        fields = {entry["field"]: entry["reason"] for entry in manifest}
+        # NP, IF, TSS are cycling-applicable but absent
+        assert fields.get("norm_power_w") == MANIFEST_REASON_ABSENT
+        assert fields.get("tss") == MANIFEST_REASON_ABSENT
+        assert fields.get("intensity_factor") == MANIFEST_REASON_ABSENT
+
+    def test_lap_swim_marks_run_and_bike_metrics_not_applicable(self) -> None:
+        from garmin_cli.serializers import (
+            MANIFEST_REASON_NOT_APPLICABLE,
+            serialize_activity_detail,
+            serialize_capability_manifest,
+        )
+        raw = {
+            "activityId": 1, "activityType": {"typeKey": "lap_swimming"},
+            "avgSwolf": 38, "strokes": 720,
+        }
+        projected = serialize_activity_detail(raw)[0]
+        manifest = serialize_capability_manifest(raw, projected)
+        fields = {entry["field"]: entry["reason"] for entry in manifest}
+        for key in ("avg_power_w", "norm_power_w", "tss", "intensity_factor",
+                    "avg_cadence_rpm", "avg_ground_contact_time",
+                    "avg_vertical_oscillation", "avg_stride_length",
+                    "avg_cadence_spm"):
+            assert fields.get(key) == MANIFEST_REASON_NOT_APPLICABLE
+
+    def test_running_without_hrm_pro_marks_dynamics_absent(self) -> None:
+        from garmin_cli.serializers import (
+            MANIFEST_REASON_ABSENT,
+            serialize_activity_detail,
+            serialize_capability_manifest,
+        )
+        raw = {
+            "activityId": 1, "activityType": {"typeKey": "running"},
+            "averageRunningCadenceInStepsPerMinute": 175,
+            # GCT/VO/VR/stride absent
+        }
+        projected = serialize_activity_detail(raw)[0]
+        manifest = serialize_capability_manifest(raw, projected)
+        fields = {entry["field"]: entry["reason"] for entry in manifest}
+        assert fields.get("avg_ground_contact_time") == MANIFEST_REASON_ABSENT
+        assert fields.get("avg_vertical_oscillation") == MANIFEST_REASON_ABSENT
+        assert fields.get("avg_stride_length") == MANIFEST_REASON_ABSENT
+
+    def test_universal_entry_only_emits_absent_never_not_applicable(self) -> None:
+        from garmin_cli.serializers import (
+            MANIFEST_REASON_NOT_APPLICABLE,
+            serialize_activity_detail,
+            serialize_capability_manifest,
+        )
+        # max_hr is universal (sports=None); for any sport it should never be
+        # tagged not_applicable. Test for cycling, running, swim.
+        for type_key in ("cycling", "running", "lap_swimming", "open_water_swimming"):
+            raw = {"activityId": 1, "activityType": {"typeKey": type_key}, "maxHR": 180}
+            projected = serialize_activity_detail(raw)[0]
+            manifest = serialize_capability_manifest(raw, projected)
+            for entry in manifest:
+                if entry["field"] == "max_hr":
+                    assert entry["reason"] != MANIFEST_REASON_NOT_APPLICABLE
+
+    def test_empty_when_all_applicable_and_present(self) -> None:
+        from garmin_cli.metrics.registry import REGISTRY
+        from garmin_cli.serializers import serialize_capability_manifest
+        # Build a "perfect cycling" payload that populates every cycling-applicable
+        # metric so manifest should only contain not_applicable_to_sport entries
+        # for non-cycling fields.
+        raw = {
+            "activityId": 1, "activityType": {"typeKey": "cycling"},
+            "averageHR": 145, "maxHR": 180, "calories": 800,
+            "elevationGain": 200.0, "elevationLoss": 200.0,
+            "averageSpeed": 8.0, "maxSpeed": 15.0,
+            "averageBikingCadenceInRevPerMinute": 85.0,
+            "averagePower": 220, "maxPower": 600, "normPower": 235,
+            "trainingStressScore": 90, "intensityFactor": 0.88,
+            "aerobicTrainingEffect": 3.5, "anaerobicTrainingEffect": 1.2,
+            "vO2MaxValue": 55.0, "recoveryTime": 1440,
+            "startTimeLocal": "2026-04-01", "activityName": "Ride",
+            "distance": 50000.0, "duration": 5400.0,
+        }
+        from garmin_cli.serializers import serialize_activity_detail
+        projected = serialize_activity_detail(raw)[0]
+        manifest = serialize_capability_manifest(raw, projected)
+        # cycling-specific present-and-populated keys do not appear
+        for key in ("avg_power_w", "norm_power_w", "tss", "intensity_factor",
+                    "avg_cadence_rpm", "aerobic_training_effect", "vo2max"):
+            assert all(e["field"] != key for e in manifest)
+
+    def test_leg_index_set_when_provided(self) -> None:
+        from garmin_cli.serializers import serialize_capability_manifest
+        raw = {"activityId": 1, "activityType": {"typeKey": "running"}}
+        manifest = serialize_capability_manifest(raw, leg_index=2)
+        assert manifest, "expected non-empty manifest for running activity"
+        for entry in manifest:
+            assert entry["leg_index"] == 2
+
+    def test_leg_index_none_by_default(self) -> None:
+        from garmin_cli.serializers import serialize_capability_manifest
+        raw = {"activityId": 1, "activityType": {"typeKey": "running"}}
+        manifest = serialize_capability_manifest(raw)
+        for entry in manifest:
+            assert entry["leg_index"] is None
+
+    def test_unknown_sport_marks_all_sport_specific_not_applicable(self) -> None:
+        from garmin_cli.serializers import (
+            MANIFEST_REASON_NOT_APPLICABLE,
+            serialize_capability_manifest,
+        )
+        raw = {"activityId": 1, "activityType": {"typeKey": "weightlifting"}}
+        manifest = serialize_capability_manifest(raw)
+        # every sport-specific metric (sports != None) should be tagged
+        sport_specific = [e for e in manifest if e["reason"] == MANIFEST_REASON_NOT_APPLICABLE]
+        assert len(sport_specific) >= 5  # at least running + cycling + swim metrics
+
+    def test_manifest_summary_counts(self) -> None:
+        from garmin_cli.serializers import (
+            MANIFEST_REASON_ABSENT,
+            MANIFEST_REASON_NOT_APPLICABLE,
+            manifest_summary_counts,
+        )
+        manifest = [
+            {"field": "a", "reason": MANIFEST_REASON_NOT_APPLICABLE, "leg_index": None},
+            {"field": "b", "reason": MANIFEST_REASON_NOT_APPLICABLE, "leg_index": None},
+            {"field": "c", "reason": MANIFEST_REASON_ABSENT, "leg_index": None},
+        ]
+        not_app, absent = manifest_summary_counts(manifest)
+        assert not_app == 2
+        assert absent == 1
+
+
+class TestSerializeMetricsDescriptors:
+
+    def test_returns_one_row_per_descriptor(self) -> None:
+        from garmin_cli.serializers import serialize_metrics_descriptors
+        details = {
+            "metricDescriptors": [
+                {"key": "directHeartRate", "unit": {"key": "bpm"}, "metricsIndex": 0},
+                {"key": "directPower", "unit": {"key": "W"}, "metricsIndex": 1},
+                {"key": "directSpeed", "unit": {"key": "mps"}, "metricsIndex": 2},
+            ],
+        }
+        rows = serialize_metrics_descriptors(details)
+        assert len(rows) == 3
+        assert rows[0] == {"key": "directHeartRate", "unit": "bpm", "metricsIndex": 0}
+        assert rows[1] == {"key": "directPower", "unit": "W", "metricsIndex": 1}
+
+    def test_descriptor_with_string_unit(self) -> None:
+        from garmin_cli.serializers import serialize_metrics_descriptors
+        details = {"metricDescriptors": [{"key": "x", "unit": "raw", "metricsIndex": 0}]}
+        rows = serialize_metrics_descriptors(details)
+        assert rows[0]["unit"] == "raw"
+
+    def test_missing_unit_emits_none(self) -> None:
+        from garmin_cli.serializers import serialize_metrics_descriptors
+        details = {"metricDescriptors": [{"key": "x", "metricsIndex": 7}]}
+        rows = serialize_metrics_descriptors(details)
+        assert rows[0]["unit"] is None
+        assert rows[0]["metricsIndex"] == 7
+
+    def test_empty_returns_empty(self) -> None:
+        from garmin_cli.serializers import serialize_metrics_descriptors
+        assert serialize_metrics_descriptors({}) == []
+        assert serialize_metrics_descriptors({"metricDescriptors": []}) == []
+        assert serialize_metrics_descriptors(None) == []

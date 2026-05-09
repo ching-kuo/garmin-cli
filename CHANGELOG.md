@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Sport-aware activity detail: `activity get --detail` and MCP `activity_get(detail=True)` now project metrics scoped by the activity's `activityType.typeKey`. Cycling activities surface the full power suite (avg/max/normalized power, TSS, intensity factor); running activities surface running dynamics (ground contact time, vertical oscillation, vertical ratio, stride length); pool-swim activities surface SWOLF, total strokes, average stroke rate, and distance per stroke. Run/bike training response (aerobic/anaerobic training effect, vO2max, recovery time) surfaces for both.
+- `activity laps <id>` CLI subcommand and MCP `activity_laps` tool: return lap-by-lap rows for run/bike activities, per-pool-length rows for pool-swim activities. Pool swim auto-routes to the typed `get_activity_typed_splits` backend method; everything else uses the existing splits endpoint. Multisport parents (triathlon etc.) fan out across child legs and stamp a 0-based `leg_index` on every returned row.
+- `--laps` flag on `activity get` for combining detail + laps in a single envelope.
+- `activity zones <id>` CLI subcommand and MCP `activity_hr_zones` tool: return per-zone time-in-zone breakdown using the typed `get_activity_hr_in_timezones` backend method.
+- MCP `activity_metrics_describe` tool: returns the dynamic metric descriptor schema (key, unit, metricsIndex) of an activity's detail stream via the typed `get_activity_details` backend method. Useful for LLM agents that want to inspect what a watch recorded before requesting samples.
+- Capability manifest (`unavailable` field on `activity_get(detail=True)` JSON envelope and MCP response): annotates registry-known metrics with one of two reasons — `not_applicable_to_sport` (the metric is not meaningful for the activity's sport) or `absent_in_response` (the metric is sport-applicable but missing from the upstream payload). Multisport parent envelopes union per-child manifests with `leg_index` attached to each entry. Empty manifests are omitted; tables print a counts-only footnote.
+- Metric registry foundation (`src/garmin_cli/metrics/`): single declarative source of truth for metric keys, source paths, sport applicability, formatting, and detail level. CLI columns, MCP responses, and capability manifests all derive from registry entries.
+- New typed backend-adapter wrappers: `get_activity_typed_splits`, `get_activity_hr_in_timezones`, `get_activity_details`. These call typed methods on the python-garminconnect adapter rather than raw URL strings, eliminating URL-casing risk.
+
+### Changed
+- `activity get --detail` JSON output is now sport-aware: every union-schema key is present with `null` for sport-inapplicable metrics so consumers see a stable shape regardless of activity type. CSV output uses a stable union-schema header — every cycling key from the legacy `COLUMNS_ACTIVITY_DETAIL` order is preserved in the same position; running and swim columns are appended additively. Table output is sport-aware and shows only sport-applicable columns to keep tables dense.
+- `COLUMNS_ACTIVITY_DETAIL` is regenerated from the metric registry's union schema. Legacy cycling-leaning keys keep their relative positions; new sport-specific keys are appended.
+
+### Deferred
+- `activity_swim_lengths` MCP tool — `activity_laps` already routes pool-swim activities to per-pool-length rows; a dedicated swim-only tool will ship if a use case differentiates it.
+- `activity_metrics_series` MCP tool — down-sampling policy and `max_samples` defaults need real-payload profiling first; `activity_metrics_describe` ships as the descriptor-only subset.
+- Hardware-detection and profile-config manifest reasons (`requires_hardware`, `requires_profile_config`) — gated on a future profile/threshold fetch.
+- FIT-file download path for L/R balance, torque effectiveness, pedal smoothness, and per-length swim stroke detail.
+- Computed NP/IF/TSS client-side fallback when FTP is unset.
+
 ## [2.0.0] - 2026-04-12
 
 ### Added

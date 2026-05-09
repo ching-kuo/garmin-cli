@@ -5,6 +5,7 @@ import json
 from datetime import date
 from typing import Any
 
+import pytest
 from click.testing import CliRunner
 
 from garmin_cli.cli import cli
@@ -601,6 +602,450 @@ class TestActivityGetCommand:
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(cli, ["activity", "get", "12345678", "--detail"])
         assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Sport-aware CLI behavior (U5)
+# ---------------------------------------------------------------------------
+
+
+class TestSportAwareActivityGet:
+    """Verify CLI uses sport-aware columns for table and union for CSV."""
+
+    def test_running_table_omits_cycling_power_columns(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={
+                "activityId": 1, "activityType": {"typeKey": "running"},
+                "averageRunningCadenceInStepsPerMinute": 180.0,
+                "avgGroundContactTime": 240,
+            },
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["activity", "get", "1", "--detail"])
+        assert result.exit_code == 0
+        # Cycling power headers should not appear in a running activity table
+        assert "norm_power_w" not in result.output
+        assert "intensity_factor" not in result.output
+        # Running dynamics column header should appear
+        assert "avg_ground_contact_time" in result.output
+
+    def test_cycling_table_omits_running_dynamics_columns(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={
+                "activityId": 2, "activityType": {"typeKey": "cycling"},
+                "averagePower": 220.0, "normPower": 240.0,
+            },
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["activity", "get", "2", "--detail"])
+        assert result.exit_code == 0
+        # Cycling power headers appear
+        assert "avg_power_w" in result.output
+        assert "norm_power_w" in result.output
+        # Running dynamics columns should not appear in cycling table
+        assert "avg_ground_contact_time" not in result.output
+        assert "avg_stride_length" not in result.output
+
+    def test_swim_table_omits_cycling_and_running_columns(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={
+                "activityId": 3, "activityType": {"typeKey": "lap_swimming"},
+                "avgSwolf": 38, "strokes": 720,
+            },
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["activity", "get", "3", "--detail"])
+        assert result.exit_code == 0
+        assert "swolf" in result.output
+        assert "total_strokes" in result.output
+        assert "avg_power_w" not in result.output
+        assert "avg_ground_contact_time" not in result.output
+
+    def test_csv_uses_stable_union_header(self, mocker: Any) -> None:
+        from garmin_cli.serializers import COLUMNS_ACTIVITY_DETAIL
+
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={
+                "activityId": 4, "activityType": {"typeKey": "cycling"},
+                "averagePower": 220.0,
+            },
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["--format", "csv", "activity", "get", "4", "--detail"])
+        assert result.exit_code == 0
+        first_line = result.output.splitlines()[0]
+        # Header must contain every union column, in stable order
+        for col in COLUMNS_ACTIVITY_DETAIL:
+            assert col in first_line
+
+    def test_csv_legacy_columns_keep_legacy_positions(self, mocker: Any) -> None:
+        legacy_prefix = (
+            "id", "date", "name", "type", "distance_km", "duration_min", "avg_hr",
+            "max_hr", "calories", "elevation_gain_m", "elevation_loss_m",
+            "avg_speed_kmh", "max_speed_kmh",
+            "avg_cadence_spm", "avg_cadence_rpm",
+            "avg_power_w", "max_power_w", "norm_power_w",
+            "tss", "intensity_factor",
+        )
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={
+                "activityId": 5, "activityType": {"typeKey": "cycling"},
+            },
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["--format", "csv", "activity", "get", "5", "--detail"])
+        assert result.exit_code == 0
+        header_columns = result.output.splitlines()[0].split(",")
+        # legacy keys must occupy the first 20 positions in their legacy order
+        assert tuple(header_columns[: len(legacy_prefix)]) == legacy_prefix
+
+    def test_json_returns_union_keys_with_nulls_for_other_sports(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={
+                "activityId": 6, "activityType": {"typeKey": "running"},
+                "averageRunningCadenceInStepsPerMinute": 175.0,
+                "avgGroundContactTime": 230,
+            },
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["--json", "activity", "get", "6", "--detail"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        row = parsed["data"][0]
+        # populated running keys
+        assert row["avg_cadence_spm"] == pytest.approx(175.0)
+        assert row["avg_ground_contact_time"] == 230
+        # cycling/swim keys present but null
+        assert row["norm_power_w"] is None
+        assert row["swolf"] is None
+
+
+# ---------------------------------------------------------------------------
+# Capability manifest in CLI output (U11)
+# ---------------------------------------------------------------------------
+
+
+class TestCapabilityManifestInCli:
+
+    def test_json_envelope_includes_unavailable_for_running(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={"activityId": 1, "activityType": {"typeKey": "running"}},
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["--json", "activity", "get", "1", "--detail"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "unavailable" in parsed
+        # cycling and swim metrics tagged as not applicable to running
+        reasons = {entry["field"]: entry["reason"] for entry in parsed["unavailable"]}
+        assert reasons.get("avg_power_w") == "not_applicable_to_sport"
+        assert reasons.get("swolf") == "not_applicable_to_sport"
+
+    def test_json_envelope_omits_unavailable_when_empty(self, mocker: Any) -> None:
+        # Hypothetical: activity has all registered metrics populated for its sport.
+        # In practice some will always be absent; assert at least that the field
+        # only appears when there is content.
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={"activityId": 1, "activityType": {"typeKey": "running"}},
+        )
+        runner = CliRunner(mix_stderr=False)
+        # without --detail, manifest is not computed
+        result = runner.invoke(cli, ["--json", "activity", "get", "1"])
+        parsed = json.loads(result.output)
+        assert "unavailable" not in parsed
+
+    def test_table_renders_footnote_when_manifest_non_empty(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={"activityId": 1, "activityType": {"typeKey": "lap_swimming"}},
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["activity", "get", "1", "--detail"])
+        assert result.exit_code == 0
+        # footnote is present, with counts only (not full per-field list)
+        assert "Note:" in result.output
+        assert "not applicable" in result.output
+
+    def test_csv_does_not_emit_manifest(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={"activityId": 1, "activityType": {"typeKey": "running"}},
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["--format", "csv", "activity", "get", "1", "--detail"])
+        assert result.exit_code == 0
+        # CSV stays a flat tabular format — no manifest text
+        assert "not_applicable_to_sport" not in result.output
+        assert "Note:" not in result.output
+
+    def test_summary_only_does_not_emit_manifest(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={"activityId": 1, "activityType": {"typeKey": "running"}},
+        )
+        runner = CliRunner(mix_stderr=False)
+        # No --detail flag → no manifest in JSON
+        result = runner.invoke(cli, ["--json", "activity", "get", "1"])
+        parsed = json.loads(result.output)
+        assert "unavailable" not in parsed
+        # No --detail flag → no footnote in table
+        result = runner.invoke(cli, ["activity", "get", "1"])
+        assert "Note:" not in result.output
+
+    def test_multisport_envelope_unions_child_manifests_with_leg_index(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={
+                "activityId": 100,
+                "activityType": {"typeKey": "multi_sport"},
+                "isMultiSportParent": True,
+                "childIds": [101, 102, 103],
+            },
+        )
+        mocker.patch(
+            "garmin_cli.commands.activities.get_multisport_children",
+            return_value=[
+                {"activityId": 101, "activityType": {"typeKey": "open_water_swimming"}, "averageHR": 145},
+                {"activityId": 102, "activityType": {"typeKey": "cycling"}, "averagePower": 200},
+                {"activityId": 103, "activityType": {"typeKey": "running"}, "averageRunningCadenceInStepsPerMinute": 175},
+            ],
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["--json", "activity", "get", "100", "--detail"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "unavailable" in parsed
+        # entries from all three legs; leg_index distinguishes them
+        leg_indices = {e.get("leg_index") for e in parsed["unavailable"]}
+        assert 0 in leg_indices
+        assert 1 in leg_indices
+        assert 2 in leg_indices
+
+
+# ---------------------------------------------------------------------------
+# activity laps command (U8)
+# ---------------------------------------------------------------------------
+
+
+class TestActivityLapsCommand:
+
+    def test_cycling_laps_invokes_raw_url_splits(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={"activityId": 1, "activityType": {"typeKey": "cycling"}},
+        )
+        splits_mock = mocker.patch(
+            "garmin_cli.commands.activities.get_activity_splits",
+            return_value={"lapDTOs": [
+                {"duration": 600, "distance": 5000, "averageHR": 145, "averagePower": 220},
+                {"duration": 540, "distance": 4500, "averageHR": 152, "averagePower": 230},
+            ]},
+        )
+        typed_splits_mock = mocker.patch(
+            "garmin_cli.commands.activities.get_activity_typed_splits",
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["--json", "activity", "laps", "1"])
+        assert result.exit_code == 0
+        splits_mock.assert_called_once_with("1")
+        typed_splits_mock.assert_not_called()
+        parsed = json.loads(result.output)
+        assert parsed["count"] == 2
+        assert parsed["data"][0]["lap_index"] == 1
+
+    def test_lap_swim_invokes_typed_splits(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={"activityId": 1, "activityType": {"typeKey": "lap_swimming"}},
+        )
+        splits_mock = mocker.patch(
+            "garmin_cli.commands.activities.get_activity_splits",
+        )
+        typed_splits_mock = mocker.patch(
+            "garmin_cli.commands.activities.get_activity_typed_splits",
+            return_value={"lengthDTOs": [
+                {"duration": 25.0, "distance": 25.0, "swolf": 38, "swimStroke": "FREESTYLE"},
+            ]},
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["--json", "activity", "laps", "1"])
+        assert result.exit_code == 0
+        typed_splits_mock.assert_called_once_with("1")
+        splits_mock.assert_not_called()
+        parsed = json.loads(result.output)
+        assert parsed["data"][0]["swolf"] == 38
+        assert parsed["data"][0]["stroke_type"] == "FREESTYLE"
+
+    def test_open_water_swim_uses_raw_splits_not_typed(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={"activityId": 1, "activityType": {"typeKey": "open_water_swimming"}},
+        )
+        splits_mock = mocker.patch(
+            "garmin_cli.commands.activities.get_activity_splits",
+            return_value={"lapDTOs": [{"duration": 600, "distance": 1000}]},
+        )
+        typed_splits_mock = mocker.patch(
+            "garmin_cli.commands.activities.get_activity_typed_splits",
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["--json", "activity", "laps", "1"])
+        assert result.exit_code == 0
+        splits_mock.assert_called_once()
+        typed_splits_mock.assert_not_called()
+
+    def test_invalid_id_returns_exit_code_1(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["activity", "laps", "abc"])
+        assert result.exit_code == 1
+
+    def test_get_with_laps_flag_includes_laps_in_envelope(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={"activityId": 1, "activityType": {"typeKey": "cycling"}, "averagePower": 200},
+        )
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity_splits",
+            return_value={"lapDTOs": [{"duration": 600, "distance": 5000, "averageHR": 145}]},
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["--json", "activity", "get", "1", "--detail", "--laps"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "laps" in parsed
+        assert len(parsed["laps"]) == 1
+        assert parsed["data"][0]["avg_power_w"] == 200
+
+    def test_multisport_parent_laps_fan_out_with_leg_index(self, mocker: Any) -> None:
+        """Multisport activity laps fetches each child and stamps leg_index."""
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={
+                "activityId": 100,
+                "activityType": {"typeKey": "multi_sport"},
+                "isMultiSportParent": True,
+                "childIds": [101, 102, 103],
+            },
+        )
+        mocker.patch(
+            "garmin_cli.commands.activities.get_multisport_children",
+            return_value=[
+                {"activityId": 101, "activityType": {"typeKey": "open_water_swimming"}},
+                {"activityId": 102, "activityType": {"typeKey": "cycling"}},
+                {"activityId": 103, "activityType": {"typeKey": "running"}},
+            ],
+        )
+        # OWS and cycling and running all use raw splits (only lap_swimming uses typed)
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity_splits",
+            side_effect=[
+                {"lapDTOs": [{"duration": 600, "distance": 1000, "averageHR": 140}]},  # OWS
+                {"lapDTOs": [{"duration": 1200, "distance": 8000, "averagePower": 220}]},  # bike
+                {"lapDTOs": [{"duration": 900, "distance": 3000, "avgGroundContactTime": 235}]},  # run
+            ],
+        )
+        mocker.patch("garmin_cli.commands.activities.get_activity_typed_splits")
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["--json", "activity", "laps", "100"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["count"] == 3
+        leg_indices = {row["leg_index"] for row in parsed["data"]}
+        assert leg_indices == {0, 1, 2}
+
+    def test_get_without_laps_flag_omits_laps(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity",
+            return_value={"activityId": 1, "activityType": {"typeKey": "cycling"}},
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["--json", "activity", "get", "1", "--detail"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "laps" not in parsed
+
+
+# ---------------------------------------------------------------------------
+# activity zones command (U10)
+# ---------------------------------------------------------------------------
+
+
+class TestActivityZonesCommand:
+
+    def test_zones_returns_envelope(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity_hr_in_timezones",
+            return_value=[
+                {"zoneNumber": 1, "zoneLowBoundary": 90, "zoneHighBoundary": 109, "secsInZone": 600},
+                {"zoneNumber": 2, "zoneLowBoundary": 110, "zoneHighBoundary": 129, "secsInZone": 1200},
+            ],
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["--json", "activity", "zones", "1"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["count"] == 2
+        assert parsed["data"][0]["zone"] == 1
+        assert parsed["data"][0]["minutes_in_zone"] == 10.0
+
+    def test_zones_table_renders(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity_hr_in_timezones",
+            return_value=[
+                {"zoneNumber": z, "secsInZone": 60 * z, "zoneLowBoundary": 100 + z, "zoneHighBoundary": 110 + z}
+                for z in range(1, 6)
+            ],
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["activity", "zones", "1"])
+        assert result.exit_code == 0
+        # five zones rendered
+        assert "zone" in result.output.lower() or "minutes_in_zone" in result.output
+
+    def test_zones_empty_data_renders_no_data(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.commands.activities.get_activity_hr_in_timezones",
+            return_value=[],
+        )
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["activity", "zones", "1"])
+        assert result.exit_code == 0
+
+    def test_zones_invalid_id_exits_1(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.commands.activities.ensure_authenticated")
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(cli, ["activity", "zones", "abc"])
+        assert result.exit_code == 1
 
 
 # ---------------------------------------------------------------------------

@@ -5,7 +5,11 @@ from datetime import date
 from typing import Any
 
 from garmin_cli import backend as garth
-from garmin_cli.endpoints._base import _make_request, _validate_numeric_id
+from garmin_cli.endpoints._base import (
+    _make_request,
+    _make_typed_request,
+    _validate_numeric_id,
+)
 from garmin_cli.exceptions import GarminCliError
 
 
@@ -53,6 +57,50 @@ def get_activity(activity_id: Any) -> dict:
 def get_activity_splits(activity_id: Any) -> dict:
     validated = _validate_numeric_id(activity_id, "activity_id")
     result = _request(f"/activity-service/activity/{validated}/splits")
+    return result if result is not None else {}
+
+
+def get_activity_typed_splits(activity_id: Any) -> dict:
+    """Wrap the backend's typed get_activity_typed_splits helper.
+
+    Calls the python-garminconnect typed method rather than a raw URL string,
+    eliminating URL-casing risk. Used for per-pool-length swim data.
+    """
+    validated = _validate_numeric_id(activity_id, "activity_id")
+    result = _make_typed_request(garth.get_activity_typed_splits, validated)
+    return result if result is not None else {}
+
+
+def get_activity_hr_in_timezones(activity_id: Any) -> list:
+    """Wrap the backend's typed get_activity_hr_in_timezones helper.
+
+    Returns the per-zone time-in-zone breakdown for an activity. Calls the
+    python-garminconnect typed method rather than a raw URL string. Some
+    upstream releases wrap the array under a ``timeInZones`` (or related)
+    key — unwrap defensively so downstream serializers see a flat list.
+    """
+    validated = _validate_numeric_id(activity_id, "activity_id")
+    result = _make_typed_request(garth.get_activity_hr_in_timezones, validated)
+    if result is None:
+        return []
+    if isinstance(result, list):
+        return result
+    if isinstance(result, dict):
+        for key in ("timeInZones", "timeInZone", "hrTimeInZones", "zones"):
+            container = result.get(key)
+            if isinstance(container, list):
+                return container
+    return []
+
+
+def get_activity_details(activity_id: Any) -> dict:
+    """Wrap the backend's typed get_activity_details helper.
+
+    Returns the metric-descriptor + sample-stream payload. Used by
+    ``activity_metrics_describe`` to expose the dynamic schema.
+    """
+    validated = _validate_numeric_id(activity_id, "activity_id")
+    result = _make_typed_request(garth.get_activity_details, validated)
     return result if result is not None else {}
 
 

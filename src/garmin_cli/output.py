@@ -118,6 +118,29 @@ def _format_cell(value: Any) -> str:
     return str(value)
 
 
+def render_capability_footnote(
+    not_applicable_count: int,
+    absent_count: int,
+) -> str | None:
+    """Return a single-line summary footnote for a capability manifest.
+
+    Returns ``None`` when both counts are zero (caller should skip rendering).
+    Counts only — full per-field breakdown stays in the JSON envelope's
+    ``unavailable[]`` array to keep terminal output readable.
+    """
+    if not_applicable_count == 0 and absent_count == 0:
+        return None
+    parts: list[str] = []
+    if not_applicable_count:
+        plural = "metric" if not_applicable_count == 1 else "metrics"
+        parts.append(f"{not_applicable_count} {plural} not applicable to this sport")
+    if absent_count:
+        plural = "metric" if absent_count == 1 else "metrics"
+        parts.append(f"{absent_count} {plural} unexpectedly absent")
+    body = "; ".join(parts)
+    return f"Note: {body}. Use --json output for details."
+
+
 _CSV_INJECT_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 

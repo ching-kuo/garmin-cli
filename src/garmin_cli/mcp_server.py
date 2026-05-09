@@ -14,11 +14,17 @@ from garmin_cli.config import CliConfig
 from garmin_cli.endpoints._base import extract_status_code
 from garmin_cli.endpoints.activities import (
     get_activity,
+    get_activity_details,
+    get_activity_hr_in_timezones,
+    get_activity_splits,
+    get_activity_typed_splits,
     get_activity_weather,
     get_multisport_children,
     is_multisport_parent,
     list_activities,
 )
+from garmin_cli.metrics.registry import LAP_SWIM_TYPE_KEYS
+from garmin_cli.metrics.sport_profile import profile_for
 from garmin_cli.endpoints.devices import get_devices
 from garmin_cli.endpoints.health import (
     get_body_battery_range,
@@ -55,7 +61,11 @@ from garmin_cli.serializers import (
     COLUMNS_ACTIVITY_WEATHER,
     select_latest_dated_rows,
     serialize_activity_detail,
+    serialize_activity_hr_zones,
+    serialize_activity_laps,
     serialize_activity_summary,
+    serialize_capability_manifest,
+    serialize_metrics_descriptors,
     serialize_multisport_children,
     serialize_body_battery,
     serialize_calendar_workout,
@@ -129,6 +139,42 @@ def _handle_error(exc: GarminCliError) -> ToolError:
     if exc.error_code == "AUTH_MISSING":
         msg = f"{msg} Run `garmin-cli login` to authenticate interactively."
     return ToolError(msg)
+
+
+def _activity_type_key(activity: Any) -> str | None:
+    if isinstance(activity, dict):
+        activity_type = activity.get("activityType")
+        if isinstance(activity_type, dict):
+            return activity_type.get("typeKey")
+    return None
+
+
+def _fetch_one_activity_laps(activity: dict[str, Any], activity_id: Any) -> list[dict[str, Any]]:
+    type_key = _activity_type_key(activity)
+    profile = profile_for(type_key)
+    if profile.type_keys & LAP_SWIM_TYPE_KEYS:
+        splits_payload = get_activity_typed_splits(activity_id)
+    else:
+        splits_payload = get_activity_splits(activity_id)
+    return serialize_activity_laps(activity, splits_payload, profile)
+
+
+def _fetch_laps_rows_for_activity(activity: dict[str, Any], activity_id: Any) -> list[dict[str, Any]]:
+    """Fetch laps; for multisport parents, fan out to children with leg_index."""
+    if is_multisport_parent(activity):
+        children = get_multisport_children(activity)
+        if children:
+            rows: list[dict[str, Any]] = []
+            for idx, child in enumerate(children):
+                child_id = child.get("activityId")
+                if child_id is None:
+                    continue
+                child_rows = _fetch_one_activity_laps(child, child_id)
+                for row in child_rows:
+                    row["leg_index"] = idx
+                rows.extend(child_rows)
+            return rows
+    return _fetch_one_activity_laps(activity, activity_id)
 
 
 def create_mcp_server(config: CliConfig) -> MCPServer:
@@ -303,7 +349,7 @@ def create_mcp_server(config: CliConfig) -> MCPServer:
 
     @mcp.tool()
     def activity_get(activity_id: int, detail: bool = False) -> dict[str, Any]:
-        """Get a single activity by ID. For multisport activities (triathlon etc.), includes child activities with per-sport details. Returns compact activity fields by default, or extended metrics such as max_hr, calories, elevation, speed, cadence, power, tss, and intensity_factor when detail=True."""
+        """Get a single activity by ID. For multisport activities (triathlon etc.), includes child activities with per-sport details. Returns compact activity fields by default, or extended sport-aware metrics including running dynamics (GCT, vertical oscillation/ratio, stride length), cycling power suite (avg/max/normalized power, TSS, IF), swim aggregates (SWOLF, strokes), and training response (aerobic/anaerobic training effect, vO2max, recovery time) when detail=True. When detail=True, the response carries an additional ``unavailable`` array (when non-empty) annotating which registry-known metrics are not applicable to this sport (``not_applicable_to_sport``) or unexpectedly absent (``absent_in_response``)."""
         _validate_positive_id(activity_id, "activity_id")
         try:
             ensure_authenticated(config)
@@ -312,13 +358,29 @@ def create_mcp_server(config: CliConfig) -> MCPServer:
             raise _handle_error(exc) from exc
         rows = serialize_activity_detail(raw) if detail else serialize_activity_summary(raw)
         result = _envelope(rows)
+        children: list[dict[str, Any]] = []
         if is_multisport_parent(raw):
             try:
-                children = get_multisport_children(raw)
-                if children:
-                    result["children"] = serialize_multisport_children(children)
+                fetched = get_multisport_children(raw)
             except GarminCliError as exc:
                 raise _handle_error(exc) from exc
+            if fetched:
+                children = fetched
+                result["children"] = serialize_multisport_children(fetched)
+        if detail:
+            manifest: list[dict[str, Any]] = []
+            if children:
+                for idx, child in enumerate(children):
+                    child_row = serialize_activity_detail(child)
+                    child_projected = child_row[0] if child_row else None
+                    manifest.extend(serialize_capability_manifest(
+                        child, child_projected, leg_index=idx,
+                    ))
+            else:
+                projected = rows[0] if rows else None
+                manifest = serialize_capability_manifest(raw, projected)
+            if manifest:
+                result["unavailable"] = manifest
         return result
 
     @mcp.tool()
@@ -335,6 +397,40 @@ def create_mcp_server(config: CliConfig) -> MCPServer:
         else:
             rows = []
         return _envelope(rows)
+
+    @mcp.tool()
+    def activity_laps(activity_id: int) -> dict[str, Any]:
+        """Get lap-by-lap data for an activity. For pool-swim activities returns per-pool-length rows with SWOLF, stroke type, and stroke counts; for run/bike activities returns per-lap rows with HR, power (cycling), and running dynamics. For multisport parents (triathlon etc.), returns each child leg's laps concatenated with a 0-based ``leg_index`` stamped on every row."""
+        _validate_positive_id(activity_id, "activity_id")
+        try:
+            ensure_authenticated(config)
+            activity = get_activity(activity_id)
+            rows = _fetch_laps_rows_for_activity(activity, activity_id)
+        except GarminCliError as exc:
+            raise _handle_error(exc) from exc
+        return _envelope(rows)
+
+    @mcp.tool()
+    def activity_hr_zones(activity_id: int) -> dict[str, Any]:
+        """Get HR time-in-zone breakdown for an activity. Returns one row per zone: zone, zone_low_bpm, zone_high_bpm, seconds_in_zone, minutes_in_zone."""
+        _validate_positive_id(activity_id, "activity_id")
+        try:
+            ensure_authenticated(config)
+            raw = get_activity_hr_in_timezones(activity_id)
+        except GarminCliError as exc:
+            raise _handle_error(exc) from exc
+        return _envelope(serialize_activity_hr_zones(raw))
+
+    @mcp.tool()
+    def activity_metrics_describe(activity_id: int) -> dict[str, Any]:
+        """Describe the dynamic metric schema of an activity's detail stream. Returns one row per metric descriptor: key, unit, metricsIndex. Use this to discover what metrics a watch recorded for a specific activity before requesting samples."""
+        _validate_positive_id(activity_id, "activity_id")
+        try:
+            ensure_authenticated(config)
+            raw = get_activity_details(activity_id)
+        except GarminCliError as exc:
+            raise _handle_error(exc) from exc
+        return _envelope(serialize_metrics_descriptors(raw))
 
     # -- Workout tools ------------------------------------------------------
 
