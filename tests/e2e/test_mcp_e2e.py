@@ -166,7 +166,7 @@ def test_activity_get_detail_mcp_manifest(mcp_server_live, rate_limiter, first_a
     assert_row_has_keys(
         row,
         [
-            "norm_power_w", "intensity_factor", "training_stress_score",
+            "norm_power_w", "intensity_factor", "tss",
             "avg_ground_contact_time", "avg_vertical_oscillation",
             "swolf", "total_strokes",
             "aerobic_training_effect", "anaerobic_training_effect",
@@ -177,7 +177,7 @@ def test_activity_get_detail_mcp_manifest(mcp_server_live, rate_limiter, first_a
         manifest = parsed["unavailable"]
         assert isinstance(manifest, list)
         for entry in manifest:
-            assert_row_has_keys(entry, ["key", "reason"])
+            assert_row_has_keys(entry, ["field", "reason"])
             assert entry["reason"] in {
                 "not_applicable_to_sport", "absent_in_response",
             }

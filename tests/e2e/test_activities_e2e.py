@@ -139,12 +139,12 @@ def test_get_activity_detail_union_schema_and_manifest(run_cli, activity_id):
     # not the watch recorded these, the keys must be present so consumers see a
     # stable shape.
     union_keys = [
-        "norm_power_w", "intensity_factor", "training_stress_score",
+        "norm_power_w", "intensity_factor", "tss",
         "avg_ground_contact_time", "avg_vertical_oscillation",
         "avg_vertical_ratio", "avg_stride_length",
-        "swolf", "total_strokes", "avg_stroke_rate", "avg_distance_per_stroke",
+        "swolf", "total_strokes", "avg_stroke_rate", "distance_per_stroke",
         "aerobic_training_effect", "anaerobic_training_effect",
-        "vo2_max_value", "recovery_time_hours",
+        "vo2max", "recovery_time_h",
     ]
     assert_row_has_keys(row, union_keys)
 
@@ -152,7 +152,7 @@ def test_get_activity_detail_union_schema_and_manifest(run_cli, activity_id):
         manifest = parsed["unavailable"]
         assert isinstance(manifest, list)
         for entry in manifest:
-            assert_row_has_keys(entry, ["key", "reason"])
+            assert_row_has_keys(entry, ["field", "reason"])
             assert entry["reason"] in {
                 "not_applicable_to_sport", "absent_in_response",
             }
