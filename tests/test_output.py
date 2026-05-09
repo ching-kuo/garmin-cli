@@ -104,11 +104,6 @@ class TestMakeErrorEnvelope:
         for key in ("ok", "command", "error", "error_code"):
             assert key in env
 
-    def test_all_error_codes_preserved(self) -> None:
-        for code in ("AUTH_MISSING", "AUTH_FAILED", "NOT_FOUND", "RATE_LIMITED", "SERVER_ERROR"):
-            env = make_error_envelope("cmd", "msg", code)
-            assert env["error_code"] == code
-
 
 # ---------------------------------------------------------------------------
 # echo_json

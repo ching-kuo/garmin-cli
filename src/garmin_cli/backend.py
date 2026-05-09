@@ -28,7 +28,7 @@ RAW_FALLBACKS: tuple[dict[str, str], ...] = (
     },
     {
         "capability": "workout_description_update",
-        "why": "Legacy package mutates an existing workout via PUT after merging description text.",
+        "why": "garmin.api.update_workout_description mutates an existing workout via PUT after merging description text.",
         "transport": "Garmin.client.put('connectapi', '/workout-service/workout/{id}', json=payload)",
         "tests": "tests/test_backend.py",
         "removal_condition": "Use an upstream typed update method once python-garminconnect exposes one.",

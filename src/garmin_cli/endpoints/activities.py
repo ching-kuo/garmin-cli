@@ -131,6 +131,15 @@ def get_multisport_children(parent: dict) -> list[dict]:
     return children
 
 
+def activity_type_key(activity: Any) -> str | None:
+    """Return ``activityType.typeKey`` from an activity payload, or None."""
+    if isinstance(activity, dict):
+        activity_type = activity.get("activityType")
+        if isinstance(activity_type, dict):
+            return activity_type.get("typeKey")
+    return None
+
+
 def is_multisport_parent(activity: dict) -> bool:
     """Check whether an activity is a multisport parent."""
     if activity.get("isMultiSportParent") is True:

@@ -15,7 +15,6 @@ from garmin_cli.metrics.sport_profile import (
     SportProfile,
     columns_for_sport,
     profile_for,
-    union_columns,
 )
 
 
@@ -62,9 +61,6 @@ COLUMNS_ACTIVITY_SUMMARY = (
     "duration_min",
     "avg_hr",
 )
-# Stable union-schema header for activity detail output. Generated from the
-# metric registry's union_columns(); legacy cycling-leaning columns occupy the
-# same positions they did before sport-aware projection landed (R8 back-compat).
 COLUMNS_ACTIVITY_DETAIL = UNION_COLUMNS
 COLUMNS_CALENDAR_WORKOUT = ("date", "id", "name", "type", "duration_min", "description")
 COLUMNS_WORKOUT = ("id", "name", "sport", "duration_min", "description")
@@ -154,15 +150,6 @@ def _pace_from_speed(speed: Any) -> str | None:
     return f"{minutes}:{seconds:02d}"
 
 
-def _pace_from_garmin_speed(speed: Any) -> str | None:
-    if speed is None:
-        return None
-    try:
-        return _pace_from_speed(float(speed) * 10)
-    except (TypeError, ValueError):
-        return None
-
-
 def _format_pace_seconds(value: Any) -> str | None:
     if value is None:
         return None
@@ -192,27 +179,33 @@ def select_latest_dated_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 _VO2MAX_NON_SPORT_KEYS: frozenset[str] = frozenset({"userId", "heatAltitudeAcclimation"})
 
-# Garmin API field name -- "hearRate" is their typo, not ours
-_GARMIN_HR_FIELD = "hearRate"
-_GARMIN_HR_FIELD_ALT = "heartRate"
+
+def _garmin_pace(speed: Any) -> str | None:
+    if speed is None:
+        return None
+    try:
+        return _pace_from_speed(float(speed) * 10)
+    except (TypeError, ValueError):
+        return None
 
 
 def _parse_flat_lactate(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Parse flat Garmin lactate threshold items (no sport key) into per-sport dicts."""
     by_sport: dict[str, dict[str, Any]] = {}
     for item in items:
-        hr = item.get(_GARMIN_HR_FIELD) or item.get(_GARMIN_HR_FIELD_ALT)
+        # "hearRate" is Garmin's typo on the wire, not ours.
+        hr = item.get("hearRate") or item.get("heartRate")
         if hr is not None:
             by_sport.setdefault("running", {})["lactateThresholdHeartRate"] = hr
         speed = item.get("speed")
         if speed is not None:
-            by_sport.setdefault("running", {})["lactateThresholdPace"] = _pace_from_garmin_speed(speed)
+            by_sport.setdefault("running", {})["lactateThresholdPace"] = _garmin_pace(speed)
         cycling_hr = item.get("heartRateCycling")
         if cycling_hr is not None:
             by_sport.setdefault("cycling", {})["lactateThresholdHeartRate"] = cycling_hr
         row_speed = item.get("rowSpeed")
         if row_speed is not None:
-            by_sport.setdefault("rowing", {})["lactateThresholdPace"] = _pace_from_garmin_speed(row_speed)
+            by_sport.setdefault("rowing", {})["lactateThresholdPace"] = _garmin_pace(row_speed)
     return by_sport
 
 
@@ -547,11 +540,10 @@ def serialize_activity_detail(raw: Any) -> list[dict[str, Any]]:
     return [_project_union_row(a, s) for a, s in _iter_activity_pairs(raw)]
 
 
-# --- Activity laps (U7) -----------------------------------------------------
-
-# Lap row column shapes. Run/bike laps share a single shape that unions cycling
-# power and running dynamics; non-applicable fields render as None. Pool-swim
-# laps (lengths) use a swim-specific shape; OWS laps fall through to run/bike.
+# --- Activity laps ----------------------------------------------------------
+# Run/bike laps share a single shape unioning cycling power + running dynamics;
+# non-applicable fields render as None. Pool-swim lengths use a swim-specific
+# shape; OWS laps fall through to run/bike.
 
 COLUMNS_ACTIVITY_LAPS_RUN_BIKE: tuple[str, ...] = (
     "lap_index",
@@ -708,7 +700,7 @@ def columns_for_lap(profile: SportProfile) -> tuple[str, ...]:
     return COLUMNS_ACTIVITY_LAPS_RUN_BIKE
 
 
-# --- Activity HR zones (U9) -------------------------------------------------
+# --- Activity HR zones ------------------------------------------------------
 
 COLUMNS_ACTIVITY_HR_ZONES: tuple[str, ...] = (
     "zone",
@@ -750,7 +742,7 @@ def serialize_activity_hr_zones(zones: Any) -> list[dict[str, Any]]:
     return rows
 
 
-# --- Activity metric descriptors (U12) --------------------------------------
+# --- Activity metric descriptors --------------------------------------------
 
 
 def serialize_metrics_descriptors(details: Any) -> list[dict[str, Any]]:
@@ -777,15 +769,7 @@ def serialize_metrics_descriptors(details: Any) -> list[dict[str, Any]]:
     return rows
 
 
-COLUMNS_ACTIVITY_METRICS_DESCRIPTORS: tuple[str, ...] = ("key", "unit", "metricsIndex")
-
-
-# --- Capability manifest (U11) ----------------------------------------------
-
-# Two-reason narrowed manifest. Hardware/profile reasons are deferred until a
-# profile/threshold fetch lands; the reason precedence is documented as
-# not_applicable_to_sport > requires_hardware > requires_profile_config >
-# absent_in_response, with the middle two reasons inserted in a follow-up plan.
+# --- Capability manifest ----------------------------------------------------
 
 MANIFEST_REASON_NOT_APPLICABLE = "not_applicable_to_sport"
 MANIFEST_REASON_ABSENT = "absent_in_response"

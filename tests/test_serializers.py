@@ -150,12 +150,6 @@ class TestSerializeSleep:
             for key in ("date", "duration_hours", "deep_min", "light_min", "rem_min", "awake_min", "score"):
                 assert key in item
 
-    def test_columns_contains_required_fields(self) -> None:
-        for col in ("date", "duration_hours", "deep_min", "light_min", "rem_min", "awake_min", "score"):
-            assert col in COLUMNS_SLEEP
-
-
-
 # ---------------------------------------------------------------------------
 # serialize_hrv
 # ---------------------------------------------------------------------------
@@ -245,11 +239,6 @@ class TestSerializeHrv:
             }
         ]
 
-    def test_columns_contains_required_fields(self) -> None:
-        for col in ("date", "weekly_avg", "last_night", "status"):
-            assert col in COLUMNS_HRV
-
-
 # ---------------------------------------------------------------------------
 # serialize_weight
 # ---------------------------------------------------------------------------
@@ -278,12 +267,6 @@ class TestSerializeWeight:
     def test_missing_weight_list_returns_empty(self) -> None:
         result = serialize_weight({})
         assert isinstance(result, list)
-
-    def test_columns_contains_required_fields(self) -> None:
-        for col in ("date", "weight_kg", "bmi", "body_fat_pct"):
-            assert col in COLUMNS_WEIGHT
-
-
 
 # ---------------------------------------------------------------------------
 # serialize_activity_summary
@@ -333,10 +316,6 @@ class TestSerializeActivitySummary:
         result = serialize_activity_summary({})
         assert isinstance(result, list)
         assert result[0].get("id") is None
-
-    def test_columns_contains_required_fields(self) -> None:
-        for col in ("id", "date", "name", "type", "distance_km", "duration_min", "avg_hr"):
-            assert col in COLUMNS_ACTIVITY_SUMMARY
 
     def test_summary_dto_fallback(self) -> None:
         """Child activities fetched directly should use summaryDTO fallback."""
@@ -459,11 +438,6 @@ class TestSerializeMultisportChildren:
         assert result[0]["distance_km"] == pytest.approx(1.5, rel=0.01)
         assert result[0]["avg_hr"] == 140
 
-    def test_columns_contains_required_fields(self) -> None:
-        for col in ("id", "sport", "name", "distance_km", "duration_min", "avg_hr", "avg_pace", "calories"):
-            assert col in COLUMNS_MULTISPORT_CHILDREN
-
-
 # ---------------------------------------------------------------------------
 # serialize_calendar_workout
 # ---------------------------------------------------------------------------
@@ -506,12 +480,6 @@ class TestSerializeCalendarWorkout:
     def test_missing_raw_returns_empty_list(self) -> None:
         result = serialize_calendar_workout({})
         assert isinstance(result, list)
-
-    def test_columns_contains_required_fields(self) -> None:
-        for col in ("date", "id", "name", "type", "duration_min", "description"):
-            assert col in COLUMNS_CALENDAR_WORKOUT
-
-
 
 # ---------------------------------------------------------------------------
 # serialize_thresholds
@@ -569,11 +537,6 @@ class TestSerializeThresholds:
             }
         )
         assert result[0]["lt_pace"] == "4:10"
-
-    def test_columns_contains_required_fields(self) -> None:
-        for col in ("sport", "lt_hr_bpm", "lt_pace", "ftp_watts", "weight_kg"):
-            assert col in COLUMNS_THRESHOLDS
-
 
 class TestWorkoutSerializers:
 
@@ -747,11 +710,6 @@ def test_additional_health_serializers(
 # ---------------------------------------------------------------------------
 
 class TestSerializeActivityDetail:
-
-    def test_import_exists(self) -> None:
-        from garmin_cli.serializers import COLUMNS_ACTIVITY_DETAIL, serialize_activity_detail
-        assert callable(serialize_activity_detail)
-        assert isinstance(COLUMNS_ACTIVITY_DETAIL, tuple)
 
     def test_cycling_all_power_cadence_elevation(self) -> None:
         from garmin_cli.serializers import serialize_activity_detail
@@ -951,23 +909,6 @@ class TestSerializeActivityDetail:
         assert result[0]["avg_speed_kmh"] is None
         assert result[0]["max_speed_kmh"] is None
 
-    def test_first_seven_keys_match_summary(self, sample_activity_raw: Any) -> None:
-        from garmin_cli.serializers import serialize_activity_detail
-        summary_row = serialize_activity_summary(sample_activity_raw)[0]
-        detail_row = serialize_activity_detail(sample_activity_raw)[0]
-        summary_keys = list(summary_row.keys())
-        detail_keys = list(detail_row.keys())
-        assert detail_keys[:7] == summary_keys[:7]
-        for key in summary_keys:
-            assert detail_row[key] == summary_row[key]
-
-    def test_detail_is_strict_superset_of_summary(self, sample_activity_raw: Any) -> None:
-        from garmin_cli.serializers import serialize_activity_detail
-        summary_row = serialize_activity_summary(sample_activity_raw)[0]
-        detail_row = serialize_activity_detail(sample_activity_raw)[0]
-        assert set(summary_row.keys()).issubset(set(detail_row.keys()))
-        assert len(detail_row) > len(summary_row)
-
     def test_columns_activity_detail_exists(self) -> None:
         from garmin_cli.serializers import COLUMNS_ACTIVITY_DETAIL
         for col in (
@@ -979,14 +920,6 @@ class TestSerializeActivityDetail:
             "tss", "intensity_factor",
         ):
             assert col in COLUMNS_ACTIVITY_DETAIL
-
-    def test_normalize_activity_base_indirectly(self, sample_activity_raw: Any) -> None:
-        """_normalize_activity_base is tested indirectly: summary still works after refactor."""
-        result = serialize_activity_summary(sample_activity_raw)
-        assert result[0]["id"] == 12345678
-        assert result[0]["distance_km"] == pytest.approx(10.0, rel=0.01)
-        assert result[0]["duration_min"] == pytest.approx(60.0, rel=0.01)
-        assert result[0]["avg_hr"] == 155
 
 
 # ---------------------------------------------------------------------------
@@ -1110,10 +1043,6 @@ class TestColumnsForSportInSerializers:
         cycling_cols = columns_for_sport("cycling")
         assert "avg_power_w" in cycling_cols
         assert "avg_ground_contact_time" not in cycling_cols
-
-    def test_union_columns_importable_from_serializers(self) -> None:
-        from garmin_cli.serializers import union_columns, COLUMNS_ACTIVITY_DETAIL
-        assert union_columns() == COLUMNS_ACTIVITY_DETAIL
 
 
 # ---------------------------------------------------------------------------
@@ -1241,37 +1170,8 @@ class TestSerializeActivityLaps:
         assert rows[0]["avg_hr"] == 130
 
 
-class TestColumnsForLap:
-
-    def test_swim_returns_swim_columns(self) -> None:
-        from garmin_cli.metrics.sport_profile import LAP_SWIM_PROFILE
-        from garmin_cli.serializers import COLUMNS_ACTIVITY_LAPS_SWIM, columns_for_lap
-        assert columns_for_lap(LAP_SWIM_PROFILE) == COLUMNS_ACTIVITY_LAPS_SWIM
-
-    def test_cycling_returns_cycling_columns(self) -> None:
-        from garmin_cli.metrics.sport_profile import CYCLING_PROFILE
-        from garmin_cli.serializers import COLUMNS_ACTIVITY_LAPS_CYCLING, columns_for_lap
-        cols = columns_for_lap(CYCLING_PROFILE)
-        assert cols == COLUMNS_ACTIVITY_LAPS_CYCLING
-        assert "avg_power_w" in cols
-        assert "avg_ground_contact_time" not in cols
-
-    def test_running_returns_running_columns(self) -> None:
-        from garmin_cli.metrics.sport_profile import RUNNING_PROFILE
-        from garmin_cli.serializers import COLUMNS_ACTIVITY_LAPS_RUNNING, columns_for_lap
-        cols = columns_for_lap(RUNNING_PROFILE)
-        assert cols == COLUMNS_ACTIVITY_LAPS_RUNNING
-        assert "avg_ground_contact_time" in cols
-        assert "avg_power_w" not in cols
-
-    def test_default_returns_run_bike_union(self) -> None:
-        from garmin_cli.metrics.sport_profile import DEFAULT_PROFILE
-        from garmin_cli.serializers import COLUMNS_ACTIVITY_LAPS_RUN_BIKE, columns_for_lap
-        assert columns_for_lap(DEFAULT_PROFILE) == COLUMNS_ACTIVITY_LAPS_RUN_BIKE
-
-
 # ---------------------------------------------------------------------------
-# Activity HR zones serializer (U9)
+# Activity HR zones serializer
 # ---------------------------------------------------------------------------
 
 

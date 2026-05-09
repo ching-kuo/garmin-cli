@@ -1,4 +1,4 @@
-"""Tests for sport profiles (U4)."""
+"""Tests for sport profiles."""
 from __future__ import annotations
 
 import pytest
@@ -16,13 +16,7 @@ from garmin_cli.metrics.sport_profile import (
     SportProfile,
     columns_for_sport,
     profile_for,
-    union_columns,
 )
-
-
-# ---------------------------------------------------------------------------
-# profile_for
-# ---------------------------------------------------------------------------
 
 
 class TestProfileFor:
@@ -30,19 +24,16 @@ class TestProfileFor:
     def test_running_returns_running_profile(self) -> None:
         profile = profile_for("running")
         assert profile is RUNNING_PROFILE
-        assert profile.is_pace_sport is True
         assert "avg_ground_contact_time" in profile.standard_metrics
 
     def test_cycling_returns_cycling_profile(self) -> None:
         profile = profile_for("cycling")
         assert profile is CYCLING_PROFILE
-        assert profile.is_pace_sport is False
         assert "norm_power_w" in profile.standard_metrics
 
     def test_lap_swimming_returns_swim_profile(self) -> None:
         profile = profile_for("lap_swimming")
         assert profile is LAP_SWIM_PROFILE
-        assert profile.is_pace_sport is True
         assert "swolf" in profile.standard_metrics
 
     def test_trail_running_aliases_to_running(self) -> None:
@@ -61,7 +52,6 @@ class TestProfileFor:
         profile = profile_for("open_water_swimming")
         assert profile is OPEN_WATER_SWIM_PROFILE
         assert "swolf" not in profile.standard_metrics
-        # OWS profile excludes per-length stroke metrics
         assert "distance_per_stroke" not in profile.standard_metrics
 
     def test_multi_sport_returns_multi_sport_profile(self) -> None:
@@ -74,11 +64,6 @@ class TestProfileFor:
 
     def test_none_sport_returns_default_profile(self) -> None:
         assert profile_for(None) is DEFAULT_PROFILE
-
-
-# ---------------------------------------------------------------------------
-# Profile composition
-# ---------------------------------------------------------------------------
 
 
 class TestProfileComposition:
@@ -110,21 +95,14 @@ class TestProfileComposition:
             "avg_power_w",
             "norm_power_w",
             "avg_ground_contact_time",
-            "aerobic_training_effect",  # not surfaced for swim per plan
+            "aerobic_training_effect",
         ):
             assert key not in LAP_SWIM_PROFILE.standard_metrics
 
-    def test_detail_metrics_combines_summary_standard_deep(self) -> None:
+    def test_detail_metrics_concatenates_summary_then_standard(self) -> None:
         for profile in PROFILES + (DEFAULT_PROFILE,):
             combined = profile.detail_metrics()
-            assert combined[: len(profile.summary_metrics)] == profile.summary_metrics
-            tail = profile.standard_metrics + profile.deep_metrics
-            assert combined[len(profile.summary_metrics) :] == tail
-
-
-# ---------------------------------------------------------------------------
-# Registry coverage
-# ---------------------------------------------------------------------------
+            assert combined == profile.summary_metrics + profile.standard_metrics
 
 
 class TestRegistryCoverage:
@@ -139,11 +117,6 @@ class TestRegistryCoverage:
             assert key in REGISTRY
 
 
-# ---------------------------------------------------------------------------
-# Union schema and sport-aware columns
-# ---------------------------------------------------------------------------
-
-
 class TestUnionColumns:
 
     def test_union_columns_starts_with_legacy_order(self) -> None:
@@ -155,22 +128,19 @@ class TestUnionColumns:
             "avg_power_w", "max_power_w", "norm_power_w",
             "tss", "intensity_factor",
         )
-        assert union_columns()[: len(legacy_prefix)] == legacy_prefix
+        assert UNION_COLUMNS[: len(legacy_prefix)] == legacy_prefix
 
-    def test_union_columns_appends_running_dynamics_after_legacy(self) -> None:
-        cols = union_columns()
+    def test_running_dynamics_appended_after_legacy(self) -> None:
         for key in ("avg_ground_contact_time", "avg_vertical_oscillation",
                     "avg_vertical_ratio", "avg_stride_length"):
-            assert cols.index(key) > cols.index("intensity_factor")
+            assert UNION_COLUMNS.index(key) > UNION_COLUMNS.index("intensity_factor")
 
-    def test_union_columns_appends_swim_after_running(self) -> None:
-        cols = union_columns()
-        assert cols.index("swolf") > cols.index("avg_stride_length")
-        assert cols.index("total_strokes") > cols.index("swolf")
+    def test_swim_appended_after_running_dynamics(self) -> None:
+        assert UNION_COLUMNS.index("swolf") > UNION_COLUMNS.index("avg_stride_length")
+        assert UNION_COLUMNS.index("total_strokes") > UNION_COLUMNS.index("swolf")
 
     def test_union_columns_no_duplicates(self) -> None:
-        cols = union_columns()
-        assert len(cols) == len(set(cols))
+        assert len(UNION_COLUMNS) == len(set(UNION_COLUMNS))
 
 
 class TestColumnsForSport:

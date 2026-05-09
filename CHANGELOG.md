@@ -15,6 +15,7 @@
 ### Changed
 - `activity get --detail` JSON output is now sport-aware: every union-schema key is present with `null` for sport-inapplicable metrics so consumers see a stable shape regardless of activity type. CSV output uses a stable union-schema header — every cycling key from the legacy `COLUMNS_ACTIVITY_DETAIL` order is preserved in the same position; running and swim columns are appended additively. Table output is sport-aware and shows only sport-applicable columns to keep tables dense.
 - `COLUMNS_ACTIVITY_DETAIL` is regenerated from the metric registry's union schema. Legacy cycling-leaning keys keep their relative positions; new sport-specific keys are appended.
+- Internal cleanup: trimmed unused `MetricEntry` fields (`label`, `unit`, `detail_level`, `available_in`), unused `SportProfile` fields (`is_pace_sport`, `deep_metrics`), test-only registry helpers (`lookup`, `at_detail`, `project`), and dead serializer constants. Consolidated duplicated `activity_type_key` helpers behind a shared public function in `endpoints/activities.py`. No user-facing surface changed.
 
 ### Deferred
 - `activity_swim_lengths` MCP tool — `activity_laps` already routes pool-swim activities to per-pool-length rows; a dedicated swim-only tool will ship if a use case differentiates it.

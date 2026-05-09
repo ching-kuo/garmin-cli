@@ -2,14 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Literal, Mapping
-
-
-DetailLevel = Literal["summary", "standard", "deep"]
+from typing import Any, Callable, Iterable, Mapping
 
 
 # Sport typeKey families. These mirror the values Garmin Connect emits in
-# ``activityType.typeKey`` and are reused by sport profiles in U4.
+# ``activityType.typeKey``.
 RUNNING_TYPE_KEYS: frozenset[str] = frozenset({
     "running",
     "trail_running",
@@ -43,12 +40,8 @@ class MetricEntry:
     """
 
     key: str
-    label: str
-    unit: str | None
     source_paths: tuple[tuple[str, ...], ...]
     sports: frozenset[str] | None
-    detail_level: DetailLevel
-    available_in: frozenset[str]
     formatter: Callable[[Any], Any] | None = None
 
 
@@ -62,12 +55,6 @@ def _walk(value: Any, path: tuple[str, ...]) -> Any:
             return None
         current = current.get(key)
     return current
-
-
-def _apply_formatter(entry: MetricEntry, value: Any) -> Any:
-    if entry.formatter is None:
-        return value
-    return entry.formatter(value)
 
 
 def resolve(
@@ -87,20 +74,11 @@ def resolve(
         if summary_dto is not None and path and path[0] == "summaryDTO":
             value = _walk(summary_dto, path[1:])
             if value is not None:
-                return _apply_formatter(entry, value)
+                return entry.formatter(value) if entry.formatter else value
         value = _walk(activity, path)
         if value is not None:
-            return _apply_formatter(entry, value)
+            return entry.formatter(value) if entry.formatter else value
     return None
-
-
-def project(
-    entries: Iterable[MetricEntry],
-    activity: dict[str, Any],
-    summary_dto: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Project a set of registry entries onto an activity payload."""
-    return {entry.key: resolve(entry, activity, summary_dto) for entry in entries}
 
 
 # --- Value transforms (preserve existing serializer semantics) ---------------
@@ -120,267 +98,177 @@ def _to_minutes(value: Any) -> float | None:
 
 # --- Registry entries --------------------------------------------------------
 
-_JSON_ONLY: frozenset[str] = frozenset({"json"})
-
-
-def _entry(
-    key: str,
-    *,
-    label: str,
-    unit: str | None,
-    source_paths: tuple[tuple[str, ...], ...],
-    sports: frozenset[str] | None,
-    detail_level: DetailLevel,
-    formatter: Callable[[Any], Any] | None = None,
-    available_in: frozenset[str] = _JSON_ONLY,
-) -> MetricEntry:
-    return MetricEntry(
-        key=key,
-        label=label,
-        unit=unit,
-        source_paths=source_paths,
-        sports=sports,
-        detail_level=detail_level,
-        available_in=available_in,
-        formatter=formatter,
-    )
-
 
 _ENTRIES: tuple[MetricEntry, ...] = (
-    # --- Summary base fields (level: summary) --------------------------------
-    _entry(
-        "id",
-        label="Activity ID",
-        unit=None,
+    # --- Summary base fields -------------------------------------------------
+    MetricEntry(
+        key="id",
         source_paths=(("activityId",),),
         sports=None,
-        detail_level="summary",
     ),
-    _entry(
-        "date",
-        label="Start time",
-        unit=None,
+    MetricEntry(
+        key="date",
         source_paths=(
             ("startTimeLocal",),
             ("summaryDTO", "startTimeLocal"),
         ),
         sports=None,
-        detail_level="summary",
     ),
-    _entry(
-        "name",
-        label="Activity name",
-        unit=None,
+    MetricEntry(
+        key="name",
         source_paths=(("activityName",),),
         sports=None,
-        detail_level="summary",
     ),
-    _entry(
-        "type",
-        label="Activity type",
-        unit=None,
+    MetricEntry(
+        key="type",
         source_paths=(("activityType", "typeKey"),),
         sports=None,
-        detail_level="summary",
     ),
-    _entry(
-        "distance_km",
-        label="Distance",
-        unit="km",
+    MetricEntry(
+        key="distance_km",
         source_paths=(
             ("distance",),
             ("summaryDTO", "distance"),
         ),
         sports=None,
-        detail_level="summary",
         formatter=_to_km,
     ),
-    _entry(
-        "duration_min",
-        label="Duration",
-        unit="min",
+    MetricEntry(
+        key="duration_min",
         source_paths=(
             ("duration",),
             ("summaryDTO", "duration"),
         ),
         sports=None,
-        detail_level="summary",
         formatter=_to_minutes,
     ),
-    _entry(
-        "avg_hr",
-        label="Average heart rate",
-        unit="bpm",
+    MetricEntry(
+        key="avg_hr",
         source_paths=(
             ("averageHR",),
             ("summaryDTO", "averageHR"),
         ),
         sports=None,
-        detail_level="summary",
     ),
-    # --- Detail fields, universal (level: standard) --------------------------
-    _entry(
-        "max_hr",
-        label="Maximum heart rate",
-        unit="bpm",
+    # --- Detail fields, universal -------------------------------------------
+    MetricEntry(
+        key="max_hr",
         source_paths=(
             ("maxHR",),
             ("summaryDTO", "maxHR"),
         ),
         sports=None,
-        detail_level="standard",
     ),
-    _entry(
-        "calories",
-        label="Calories",
-        unit="kcal",
+    MetricEntry(
+        key="calories",
         source_paths=(
             ("calories",),
             ("summaryDTO", "calories"),
         ),
         sports=None,
-        detail_level="standard",
     ),
-    _entry(
-        "elevation_gain_m",
-        label="Elevation gain",
-        unit="m",
+    MetricEntry(
+        key="elevation_gain_m",
         source_paths=(
             ("elevationGain",),
             ("summaryDTO", "elevationGain"),
         ),
         sports=None,
-        detail_level="standard",
     ),
-    _entry(
-        "elevation_loss_m",
-        label="Elevation loss",
-        unit="m",
+    MetricEntry(
+        key="elevation_loss_m",
         source_paths=(
             ("elevationLoss",),
             ("summaryDTO", "elevationLoss"),
         ),
         sports=None,
-        detail_level="standard",
     ),
-    _entry(
-        "avg_speed_kmh",
-        label="Average speed",
-        unit="km/h",
+    MetricEntry(
+        key="avg_speed_kmh",
         source_paths=(
             ("averageSpeed",),
             ("summaryDTO", "averageSpeed"),
         ),
         sports=None,
-        detail_level="standard",
         formatter=_to_kmh,
     ),
-    _entry(
-        "max_speed_kmh",
-        label="Maximum speed",
-        unit="km/h",
+    MetricEntry(
+        key="max_speed_kmh",
         source_paths=(
             ("maxSpeed",),
             ("summaryDTO", "maxSpeed"),
         ),
         sports=None,
-        detail_level="standard",
         formatter=_to_kmh,
     ),
-    # --- Running-specific (level: standard) ----------------------------------
-    _entry(
-        "avg_cadence_spm",
-        label="Average cadence",
-        unit="spm",
+    # --- Running-specific ---------------------------------------------------
+    MetricEntry(
+        key="avg_cadence_spm",
         source_paths=(
             ("averageRunningCadenceInStepsPerMinute",),
             ("summaryDTO", "averageRunningCadenceInStepsPerMinute"),
         ),
         sports=RUNNING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "avg_ground_contact_time",
-        label="Average ground contact time",
-        unit="ms",
+    MetricEntry(
+        key="avg_ground_contact_time",
         source_paths=(
             ("avgGroundContactTime",),
             ("summaryDTO", "avgGroundContactTime"),
         ),
         sports=RUNNING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "avg_vertical_oscillation",
-        label="Average vertical oscillation",
-        unit="cm",
+    MetricEntry(
+        key="avg_vertical_oscillation",
         source_paths=(
             ("avgVerticalOscillation",),
             ("summaryDTO", "avgVerticalOscillation"),
         ),
         sports=RUNNING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "avg_vertical_ratio",
-        label="Average vertical ratio",
-        unit="%",
+    MetricEntry(
+        key="avg_vertical_ratio",
         source_paths=(
             ("avgVerticalRatio",),
             ("summaryDTO", "avgVerticalRatio"),
         ),
         sports=RUNNING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "avg_stride_length",
-        label="Average stride length",
-        unit="cm",
+    MetricEntry(
+        key="avg_stride_length",
         source_paths=(
             ("avgStrideLength",),
             ("summaryDTO", "avgStrideLength"),
         ),
         sports=RUNNING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    # --- Cycling-specific (level: standard) ----------------------------------
-    _entry(
-        "avg_cadence_rpm",
-        label="Average cadence",
-        unit="rpm",
+    # --- Cycling-specific ---------------------------------------------------
+    MetricEntry(
+        key="avg_cadence_rpm",
         source_paths=(
             ("averageBikingCadenceInRevPerMinute",),
             ("summaryDTO", "averageBikingCadenceInRevPerMinute"),
         ),
         sports=CYCLING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "avg_power_w",
-        label="Average power",
-        unit="W",
+    MetricEntry(
+        key="avg_power_w",
         source_paths=(
             ("averagePower",),
             ("summaryDTO", "averagePower"),
         ),
         sports=CYCLING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "max_power_w",
-        label="Maximum power",
-        unit="W",
+    MetricEntry(
+        key="max_power_w",
         source_paths=(
             ("maxPower",),
             ("summaryDTO", "maxPower"),
         ),
         sports=CYCLING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "norm_power_w",
-        label="Normalized power",
-        unit="W",
+    MetricEntry(
+        key="norm_power_w",
         source_paths=(
             ("normPower",),
             ("normalizedPower",),
@@ -388,92 +276,68 @@ _ENTRIES: tuple[MetricEntry, ...] = (
             ("summaryDTO", "normalizedPower"),
         ),
         sports=CYCLING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "tss",
-        label="Training stress score",
-        unit=None,
+    MetricEntry(
+        key="tss",
         source_paths=(
             ("trainingStressScore",),
             ("summaryDTO", "trainingStressScore"),
         ),
         sports=CYCLING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "intensity_factor",
-        label="Intensity factor",
-        unit=None,
+    MetricEntry(
+        key="intensity_factor",
         source_paths=(
             ("intensityFactor",),
             ("summaryDTO", "intensityFactor"),
         ),
         sports=CYCLING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    # --- Run/bike training response (level: standard) ------------------------
-    _entry(
-        "aerobic_training_effect",
-        label="Aerobic training effect",
-        unit=None,
+    # --- Run/bike training response -----------------------------------------
+    MetricEntry(
+        key="aerobic_training_effect",
         source_paths=(
             ("aerobicTrainingEffect",),
             ("summaryDTO", "aerobicTrainingEffect"),
         ),
         sports=RUNNING_TYPE_KEYS | CYCLING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "anaerobic_training_effect",
-        label="Anaerobic training effect",
-        unit=None,
+    MetricEntry(
+        key="anaerobic_training_effect",
         source_paths=(
             ("anaerobicTrainingEffect",),
             ("summaryDTO", "anaerobicTrainingEffect"),
         ),
         sports=RUNNING_TYPE_KEYS | CYCLING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "vo2max",
-        label="VO2 max",
-        unit=None,
+    MetricEntry(
+        key="vo2max",
         source_paths=(
             ("vO2MaxValue",),
             ("summaryDTO", "vO2MaxValue"),
         ),
         sports=RUNNING_TYPE_KEYS | CYCLING_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "recovery_time_h",
-        label="Recovery time",
-        unit="h",
+    MetricEntry(
+        key="recovery_time_h",
         source_paths=(
             ("recoveryTime",),
             ("summaryDTO", "recoveryTime"),
         ),
         sports=RUNNING_TYPE_KEYS | CYCLING_TYPE_KEYS,
-        detail_level="standard",
         formatter=lambda minutes: None if minutes is None else minutes / 60,
     ),
-    # --- Pool-swim aggregates (level: standard) ------------------------------
-    _entry(
-        "swolf",
-        label="SWOLF",
-        unit=None,
+    # --- Pool-swim aggregates -----------------------------------------------
+    MetricEntry(
+        key="swolf",
         source_paths=(
             ("avgSwolf",),
             ("summaryDTO", "avgSwolf"),
         ),
         sports=LAP_SWIM_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "total_strokes",
-        label="Total strokes",
-        unit=None,
+    MetricEntry(
+        key="total_strokes",
         source_paths=(
             ("strokes",),
             ("summaryDTO", "strokes"),
@@ -481,12 +345,9 @@ _ENTRIES: tuple[MetricEntry, ...] = (
             ("summaryDTO", "totalNumberOfStrokes"),
         ),
         sports=LAP_SWIM_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "avg_stroke_rate",
-        label="Average stroke rate",
-        unit="strokes/min",
+    MetricEntry(
+        key="avg_stroke_rate",
         source_paths=(
             ("averageStrokeRate",),
             ("summaryDTO", "averageStrokeRate"),
@@ -494,31 +355,19 @@ _ENTRIES: tuple[MetricEntry, ...] = (
             ("summaryDTO", "avgStrokeRate"),
         ),
         sports=LAP_SWIM_TYPE_KEYS,
-        detail_level="standard",
     ),
-    _entry(
-        "distance_per_stroke",
-        label="Distance per stroke",
-        unit="m",
+    MetricEntry(
+        key="distance_per_stroke",
         source_paths=(
             ("avgStrokeDistance",),
             ("summaryDTO", "avgStrokeDistance"),
         ),
         sports=LAP_SWIM_TYPE_KEYS,
-        detail_level="standard",
     ),
 )
 
 
 REGISTRY: Mapping[str, MetricEntry] = {entry.key: entry for entry in _ENTRIES}
-
-
-# --- Helpers ----------------------------------------------------------------
-
-
-def lookup(key: str) -> MetricEntry:
-    """Return the registry entry for ``key`` or raise ``KeyError``."""
-    return REGISTRY[key]
 
 
 def for_sport(type_key: str | None) -> Iterable[MetricEntry]:
@@ -529,11 +378,4 @@ def for_sport(type_key: str | None) -> Iterable[MetricEntry]:
     """
     for entry in _ENTRIES:
         if entry.sports is None or (type_key is not None and type_key in entry.sports):
-            yield entry
-
-
-def at_detail(level: DetailLevel) -> Iterable[MetricEntry]:
-    """Yield entries whose ``detail_level`` matches ``level``."""
-    for entry in _ENTRIES:
-        if entry.detail_level == level:
             yield entry

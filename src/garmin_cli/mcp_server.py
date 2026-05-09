@@ -13,6 +13,7 @@ from garmin_cli.auth import _probe_session, _secure_directory, ensure_authentica
 from garmin_cli.config import CliConfig
 from garmin_cli.endpoints._base import extract_status_code
 from garmin_cli.endpoints.activities import (
+    activity_type_key,
     get_activity,
     get_activity_details,
     get_activity_hr_in_timezones,
@@ -141,17 +142,8 @@ def _handle_error(exc: GarminCliError) -> ToolError:
     return ToolError(msg)
 
 
-def _activity_type_key(activity: Any) -> str | None:
-    if isinstance(activity, dict):
-        activity_type = activity.get("activityType")
-        if isinstance(activity_type, dict):
-            return activity_type.get("typeKey")
-    return None
-
-
 def _fetch_one_activity_laps(activity: dict[str, Any], activity_id: Any) -> list[dict[str, Any]]:
-    type_key = _activity_type_key(activity)
-    profile = profile_for(type_key)
+    profile = profile_for(activity_type_key(activity))
     if profile.type_keys & LAP_SWIM_TYPE_KEYS:
         splits_payload = get_activity_typed_splits(activity_id)
     else:

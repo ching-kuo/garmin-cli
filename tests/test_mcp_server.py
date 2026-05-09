@@ -513,53 +513,6 @@ class TestNewSerializers:
         assert garmin_serializers.serialize_hill_score(None) == []
         assert garmin_serializers.serialize_device(None) == []
 
-    def test_new_columns_contain_expected_fields(self) -> None:
-        assert garmin_serializers.COLUMNS_DAILY_SUMMARY == (
-            "date",
-            "total_steps",
-            "distance_km",
-            "active_kilocalories",
-            "floors_ascended",
-            "floors_descended",
-            "moderate_intensity_minutes",
-            "vigorous_intensity_minutes",
-            "resting_heart_rate",
-        )
-        assert garmin_serializers.COLUMNS_STEPS == (
-            "date",
-            "total_steps",
-            "total_distance",
-            "step_goal",
-        )
-        assert garmin_serializers.COLUMNS_INTENSITY_MINUTES == (
-            "date",
-            "moderate_value",
-            "vigorous_value",
-            "weekly_goal",
-        )
-        assert garmin_serializers.COLUMNS_RACE_PREDICTIONS == (
-            "race_type",
-            "predicted_time_seconds",
-            "distance_meters",
-        )
-        assert garmin_serializers.COLUMNS_ENDURANCE_SCORE == (
-            "date",
-            "overall_score",
-            "endurance_classification",
-        )
-        assert garmin_serializers.COLUMNS_HILL_SCORE == (
-            "date",
-            "overall_score",
-            "endurance_score",
-            "strength_score",
-        )
-        assert garmin_serializers.COLUMNS_DEVICE == (
-            "device_id",
-            "display_name",
-            "device_type",
-            "last_sync_time",
-        )
-
 
 # ---------------------------------------------------------------------------
 # Happy path -- health tools

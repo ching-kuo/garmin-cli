@@ -8,6 +8,7 @@ import click
 from garmin_cli.auth import ensure_authenticated
 from garmin_cli.date_utils import CLICK_DATE_TYPE, resolve_click_dates
 from garmin_cli.endpoints.activities import (
+    activity_type_key,
     get_activity,
     get_activity_hr_in_timezones,
     get_activity_splits,
@@ -43,13 +44,6 @@ from garmin_cli.serializers import (
     serialize_capability_manifest,
     serialize_multisport_children,
 )
-
-
-def _activity_type_key(raw: dict) -> str | None:
-    activity_type = raw.get("activityType") if isinstance(raw, dict) else None
-    if isinstance(activity_type, dict):
-        return activity_type.get("typeKey")
-    return None
 
 
 _DATE_TYPE = CLICK_DATE_TYPE
@@ -104,7 +98,7 @@ def _fetch_one_activity_laps(raw: dict, activity_id: object) -> tuple[list[dict]
     pool-swim activities use the typed_splits endpoint to get per-pool-length
     rows; everything else uses the raw-URL splits endpoint.
     """
-    type_key = _activity_type_key(raw)
+    type_key = activity_type_key(raw)
     profile = profile_for(type_key)
     if profile.type_keys & LAP_SWIM_TYPE_KEYS:
         splits_payload = get_activity_typed_splits(activity_id)
@@ -134,7 +128,7 @@ def _fetch_laps_for_activity(raw: dict, activity_id: str) -> tuple[list[dict], S
                 for row in child_rows:
                     row["leg_index"] = idx
                 all_rows.extend(child_rows)
-            return all_rows, profile_for(_activity_type_key(raw))
+            return all_rows, profile_for(activity_type_key(raw))
     return _fetch_one_activity_laps(raw, activity_id)
 
 
@@ -154,7 +148,7 @@ def get_cmd(ctx: click.Context, activity_id: str, detail: bool, include_laps: bo
     if detail:
         # CSV uses the stable union schema; tables use sport-aware ordering so
         # only sport-applicable columns appear (no clutter of empty cells).
-        type_key = _activity_type_key(raw)
+        type_key = activity_type_key(raw)
         csv_columns = COLUMNS_ACTIVITY_DETAIL
         table_columns = columns_for_sport(type_key)
     else:
