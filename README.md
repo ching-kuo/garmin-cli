@@ -262,7 +262,7 @@ garmin-cli --json activity list --limit 5
 
 ## MCP Server (Optional)
 
-Expose garmin-cli as an MCP tool server (26 read-only tools) for local or remote MCP clients.
+Expose garmin-cli as an MCP tool server for local or remote MCP clients. Includes read tools for health, activities, workouts, performance, and devices, plus four workout write tools (`workout_create`, `workout_schedule`, `workout_update`, `workout_delete`) with dry-run preview on create and update.
 
 ### Why garmin-cli is not on PyPI
 
@@ -340,21 +340,34 @@ Then point the bridge at `http://127.0.0.1:8000/mcp` and configure it as a ChatG
 
 ### HTTP Transports
 
-SSE and streamable HTTP use the MCP SDK's built-in HTTP server. By default it binds to `127.0.0.1:8000`.
+SSE and streamable HTTP use the MCP SDK's built-in HTTP server. `--host` defaults to `127.0.0.1` (loopback only).
 
 Streamable HTTP (recommended for remote clients):
 
 ```bash
-garmin-cli mcp-server --transport streamable-http --host 127.0.0.1 --port 8000
+garmin-cli mcp-server --transport streamable-http --port 8000
 ```
 
 SSE (for clients that require it):
 
 ```bash
-garmin-cli mcp-server --transport sse --host 127.0.0.1 --port 8000
+garmin-cli mcp-server --transport sse --port 8000
 ```
 
-Optional HTTP flags: `--sse-path`, `--message-path` (SSE only), `--streamable-http-path`, `--stateless-http`, `--json-response` (streamable-http only). Use `--host 0.0.0.0` only when intentionally exposing beyond localhost.
+Optional HTTP flags: `--sse-path`, `--message-path` (SSE only), `--streamable-http-path`, `--stateless-http`, `--json-response` (streamable-http only).
+
+#### Bearer-token gate on non-loopback binds
+
+Binding to any non-loopback address (`--host 0.0.0.0` or an external interface) requires a bearer token. The server refuses to start otherwise.
+
+```bash
+export GARMIN_MCP_BEARER_TOKEN="<a-long-random-token>"
+garmin-cli mcp-server --transport streamable-http --host 0.0.0.0 --port 8000
+```
+
+When the token is set and the bind is non-loopback, the MCP SDK gates every tool call (read **and** write) through `Authorization: Bearer <token>` at the transport layer. Loopback binds (`127.0.0.1`, `::1`, `localhost`) and the `stdio` transport are not gated -- they are trusted to the same degree as the shell user running the process.
+
+TLS is expected to be terminated by a reverse proxy in front of the server; the built-in HTTP listener is plain HTTP.
 
 For remote clients, prefer a dedicated session directory with `--garmin-home` rather than exporting credentials into another process.
 

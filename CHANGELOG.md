@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- MCP write tools for workouts: `workout_create`, `workout_schedule`, `workout_update`, `workout_delete`. The schedule, update, and delete tools carry the SDK `destructive_hint=True` annotation so MCP clients know to confirm before invoking. Create and update accept `dry_run=True` to preview the resolved wire payload without writing -- `workout_create` dry-runs skip the Garmin API entirely; `workout_update` dry-runs perform one read (`get_workout`) to compute the merged payload but perform no write. Validation errors surface as a single envelope row `{ok: false, error_code: "INVALID_INPUT", errors: [...]}`. Each write invocation emits one structured stderr log line via `WriteLogEvent`; workout name and description are reduced to length-only integers so PII never lands in logs.
+- `workout_update` MCP tool uses merge semantics (matching the existing `garmin-cli workout update` CLI behavior): pass only the fields you want to change; the existing record's read-only fields (`workoutId`, `ownerId`, `createdDate`, `atpPlanId`) are preserved via `merge_workout_payload`'s deepcopy.
+- `mcp-server` subcommand now defaults `--host` to `127.0.0.1` for SSE and streamable-http transports. Non-loopback binds (`0.0.0.0`, any external interface) require the `GARMIN_MCP_BEARER_TOKEN` environment variable to be set; when set, the server wires the MCP SDK's `TokenVerifier` / `AuthSettings` middleware so all tools (read and write) require `Authorization: Bearer <token>` on every request. Empty / whitespace-only token values are rejected at startup with a clear error. Loopback binds and the `stdio` transport are unchanged -- no auth gating applies there.
+- New module `garmin_cli.mcp_auth.StaticBearerTokenVerifier` implements the SDK's `TokenVerifier` protocol with `hmac.compare_digest` for constant-time comparison; the token value is read once at startup and never logged.
+
 ## [2.1.0] - 2026-05-11
 
 ### Added

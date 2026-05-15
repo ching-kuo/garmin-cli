@@ -243,12 +243,19 @@ def _is_loopback_host(host: str | None) -> bool:
     return host in _MCP_LOOPBACK_HOSTS
 
 
-def _resolve_mcp_auth(transport: str, host: str | None) -> tuple[Any, Any]:
+def _resolve_mcp_auth(
+    transport: str, host: str | None, port: int | None
+) -> tuple[Any, Any]:
     """Resolve the (token_verifier, auth_settings) pair for the mcp-server bind.
 
     Loopback / stdio binds return (None, None). Non-loopback HTTP binds require
     ``GARMIN_MCP_BEARER_TOKEN`` to be set non-empty; absence / emptiness raises
     a ``click.ClickException`` to refuse start-up.
+
+    The ``http://<host>:<port>`` URL fed into ``AuthSettings`` is a synthetic
+    placeholder that the SDK requires for static-token mode; the scheme is
+    fixed at ``http`` because TLS is expected to be terminated by a reverse
+    proxy in front of the server.
     """
     if transport == "stdio" or _is_loopback_host(host):
         return None, None
@@ -271,7 +278,8 @@ def _resolve_mcp_auth(transport: str, host: str | None) -> tuple[Any, Any]:
 
     from mcp.server.auth.settings import AuthSettings
 
-    base_url = f"http://{host}:8000"
+    resolved_port = port if port is not None else 8000
+    base_url = f"http://{host}:{resolved_port}"
     auth = AuthSettings(issuer_url=base_url, resource_server_url=base_url)
     return verifier, auth
 
@@ -359,7 +367,7 @@ def mcp_server_cmd(
         raise SystemExit(1)
     if transport != "stdio" and host is None:
         host = _MCP_DEFAULT_LOOPBACK_HOST
-    token_verifier, auth_settings = _resolve_mcp_auth(transport, host)
+    token_verifier, auth_settings = _resolve_mcp_auth(transport, host, port)
     run_kwargs = _build_mcp_run_kwargs(
         transport=transport,
         host=host,

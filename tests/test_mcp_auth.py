@@ -73,3 +73,10 @@ class TestVerifyToken:
         v = StaticBearerTokenVerifier("secret")
         assert _verify(v, "secret-extra") is None
         assert _verify(v, "sec") is None
+
+    def test_whitespace_padded_incoming_token_rejected(self) -> None:
+        """The verifier does NOT strip incoming tokens -- bytes must match exactly."""
+        v = StaticBearerTokenVerifier("secret")
+        assert _verify(v, " secret") is None
+        assert _verify(v, "secret ") is None
+        assert _verify(v, "  secret  ") is None

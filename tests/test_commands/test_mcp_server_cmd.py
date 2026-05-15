@@ -403,6 +403,34 @@ class TestMcpServerNonLoopbackAuth:
         auth_settings = captured["kwargs"]["auth"]
         assert isinstance(verifier, StaticBearerTokenVerifier)
         assert isinstance(auth_settings, AuthSettings)
+        # AuthSettings URLs reflect the actual bind host and a default port
+        # when no --port is supplied.
+        assert "0.0.0.0" in str(auth_settings.issuer_url)
+        assert "0.0.0.0" in str(auth_settings.resource_server_url)
+
+    def test_auth_settings_url_uses_supplied_port(
+        self, mocker: Any, monkeypatch: Any
+    ) -> None:
+        pytest.importorskip("mcp")
+        monkeypatch.setenv("GARMIN_MCP_BEARER_TOKEN", "secret-tok")
+        fake_server, captured = _install_fake_mcp_module(mocker)
+        runner = CliRunner(mix_stderr=False)
+
+        result = runner.invoke(
+            cli,
+            [
+                "mcp-server",
+                "--transport", "streamable-http",
+                "--host", "0.0.0.0",
+                "--port", "9443",
+            ],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0
+        auth_settings = captured["kwargs"]["auth"]
+        assert "9443" in str(auth_settings.issuer_url)
+        assert "9443" in str(auth_settings.resource_server_url)
 
 
 def test_bearer_token_not_logged(

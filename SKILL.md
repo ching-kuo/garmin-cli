@@ -479,16 +479,22 @@ claude mcp add --transport stdio garmin -- garmin-cli --garmin-home /path/to/.ga
 
 ### HTTP transports (SSE / streamable-http)
 
+`--host` defaults to `127.0.0.1`. Non-loopback binds require the `GARMIN_MCP_BEARER_TOKEN` environment variable; when set, the MCP SDK gates every tool call (read and write) through `Authorization: Bearer <token>`.
+
 ```bash
-garmin-cli mcp-server --transport streamable-http --host 127.0.0.1 --port 8000
-garmin-cli mcp-server --transport sse --host 127.0.0.1 --port 8000
+garmin-cli mcp-server --transport streamable-http --port 8000
+garmin-cli mcp-server --transport sse --port 8000
+
+# Non-loopback (requires bearer token):
+export GARMIN_MCP_BEARER_TOKEN="<long-random-token>"
+garmin-cli mcp-server --transport streamable-http --host 0.0.0.0 --port 8000
 ```
 
 See README.md for full HTTP transport options and authentication notes.
 
 ### Available tools
 
-Read-only CLI commands are exposed as MCP tools (write operations like workout create/update/delete are not included):
+Read tools and four workout write tools (`workout_create`, `workout_schedule`, `workout_update`, `workout_delete`) are exposed. Write tools carry the SDK `destructive_hint` annotation for schedule/update/delete; create and update accept `dry_run=True` for a no-write preview.
 
 | Tool | Parameters | Returns |
 |------|-----------|---------|
@@ -513,6 +519,10 @@ Read-only CLI commands are exposed as MCP tools (write operations like workout c
 | `workout_list` | `limit?` | `{count, rows}` |
 | `workout_get` | `workout_id` | `{count, rows}` |
 | `workout_calendar` | `start_date`, `end_date` | `{count, rows}` |
+| `workout_create` | `workout`, `dry_run?` | `{count, rows}` — `ok: true, action: "created", workout_id` on success; `ok: true, dry_run: true, wire_payload, validation_report` on dry-run; `ok: false, error_code: "INVALID_INPUT", errors` on validation failure. Dry-run skips all Garmin contact. |
+| `workout_schedule` | `workout_id`, `date` | `{count, rows}` — `ok: true, action: "scheduled", workout_id, workout_schedule_id, date`. **Destructive.** |
+| `workout_update` | `workout_id`, `workout`, `dry_run?` | `{count, rows}` — `ok: true, action: "updated", workout_id` on success; dry-run returns the merged wire payload (one Garmin read, no write). Merge semantics preserve `workoutId`/`ownerId`/`createdDate`/`atpPlanId`. **Destructive.** |
+| `workout_delete` | `workout_id` | `{count, rows}` — `ok: true, action: "deleted", workout_id`. **Destructive.** |
 | `performance_race_predictions` | *(none)* | `{count, rows}` — predicted times for 5K, 10K, half marathon, marathon |
 | `performance_endurance_score` | `start_date`, `end_date` | `{count, rows}` — endurance score and classification (one API call per day) |
 | `performance_hill_score` | `start_date`, `end_date` | `{count, rows}` — hill score, endurance score, strength score (one API call per day) |

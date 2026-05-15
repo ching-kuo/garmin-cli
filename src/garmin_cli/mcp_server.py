@@ -5,7 +5,15 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from typing import Any, Literal
+
+WriteOutcome = Literal[
+    "success",
+    "dry-run",
+    "failed-validation",
+    "failed-auth",
+    "failed-upstream",
+]
 
 from mcp.server.auth.provider import TokenVerifier
 from mcp.server.auth.settings import AuthSettings
@@ -118,7 +126,7 @@ class WriteLogEvent:
     """
 
     tool: str
-    outcome: str
+    outcome: WriteOutcome
     dry_run: bool = False
     workout_id: int | None = None
     errors_count: int | None = None
@@ -163,6 +171,12 @@ def _validation_envelope(errors: list[str]) -> dict[str, Any]:
     return _envelope(
         [{"ok": False, "error_code": "INVALID_INPUT", "errors": list(errors)}]
     )
+
+
+def _classify_garmin_error(exc: GarminCliError) -> WriteOutcome:
+    if exc.error_code in ("AUTH_MISSING", "AUTH_FAILED"):
+        return "failed-auth"
+    return "failed-upstream"
 
 
 def _parse_date(value: str, name: str) -> date:
@@ -624,7 +638,7 @@ def create_mcp_server(
             ensure_authenticated(config)
             raw = create_workout(payload)
         except GarminCliError as exc:
-            outcome = "failed-auth" if exc.error_code in ("AUTH_MISSING", "AUTH_FAILED") else "failed-upstream"
+            outcome = _classify_garmin_error(exc)
             _emit_write_log(WriteLogEvent(
                 tool="workout_create",
                 outcome=outcome,
@@ -663,7 +677,7 @@ def create_mcp_server(
             ensure_authenticated(config)
             raw = schedule_workout(workout_id, parsed_date)
         except GarminCliError as exc:
-            outcome = "failed-auth" if exc.error_code in ("AUTH_MISSING", "AUTH_FAILED") else "failed-upstream"
+            outcome = _classify_garmin_error(exc)
             _emit_write_log(WriteLogEvent(
                 tool="workout_schedule",
                 outcome=outcome,
@@ -725,7 +739,7 @@ def create_mcp_server(
             existing = get_workout(workout_id)
             merged, warnings = merge_workout_payload(existing, workout)
         except GarminCliError as exc:
-            outcome = "failed-auth" if exc.error_code in ("AUTH_MISSING", "AUTH_FAILED") else "failed-upstream"
+            outcome = _classify_garmin_error(exc)
             _emit_write_log(WriteLogEvent(
                 tool="workout_update",
                 outcome=outcome,
@@ -761,9 +775,10 @@ def create_mcp_server(
         try:
             update_workout(workout_id, merged)
         except GarminCliError as exc:
+            outcome = _classify_garmin_error(exc)
             _emit_write_log(WriteLogEvent(
                 tool="workout_update",
-                outcome="failed-upstream",
+                outcome=outcome,
                 dry_run=False,
                 workout_id=workout_id,
                 name_len=_workout_name_len(workout),
@@ -797,7 +812,7 @@ def create_mcp_server(
             ensure_authenticated(config)
             delete_workout(workout_id)
         except GarminCliError as exc:
-            outcome = "failed-auth" if exc.error_code in ("AUTH_MISSING", "AUTH_FAILED") else "failed-upstream"
+            outcome = _classify_garmin_error(exc)
             _emit_write_log(WriteLogEvent(
                 tool="workout_delete",
                 outcome=outcome,

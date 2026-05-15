@@ -1577,6 +1577,26 @@ class TestMcpWorkoutUpdate:
         event = log.call_args.args[0]
         assert event.outcome == "failed-upstream"
 
+    def test_update_workout_auth_failed_during_write(self, mocker: Any) -> None:
+        """AUTH_FAILED during update_workout should log as 'failed-auth', not 'failed-upstream'."""
+        mocker.patch("garmin_cli.mcp_server.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.mcp_server.get_workout",
+            return_value=dict(_EXISTING_WORKOUT),
+        )
+        mocker.patch(
+            "garmin_cli.mcp_server.update_workout",
+            side_effect=GarminCliError(error="Token expired.", error_code="AUTH_FAILED"),
+        )
+        log = mocker.patch("garmin_cli.mcp_server._emit_write_log")
+        server = create_mcp_server(_config())
+
+        with pytest.raises(ToolError):
+            _call(server, "workout_update", {"workout_id": 42, "workout": {"name": "x"}})
+
+        event = log.call_args.args[0]
+        assert event.outcome == "failed-auth"
+
     def test_invalid_workout_id(self) -> None:
         server = create_mcp_server(_config())
         with pytest.raises(ToolError, match="positive"):
