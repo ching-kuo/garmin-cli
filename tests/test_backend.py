@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import stat
+import threading
 import types
 from pathlib import Path
 from types import SimpleNamespace
@@ -250,3 +251,98 @@ class TestApplyTimeout:
         fake_garmin.client._run_request("GET", "/test")
 
         assert fake_garmin.client.run_request_kwargs[-1]["timeout"] == 30.0
+
+
+# ---------------------------------------------------------------------------
+# Lock / concurrency tests
+# ---------------------------------------------------------------------------
+
+class TestBackendLock:
+
+    def test_set_backend_is_thread_safe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Multiple threads calling _set_backend concurrently must not corrupt state."""
+        monkeypatch.setattr(backend, "_backend", None)
+        monkeypatch.setattr(backend, "_garth_home", None)
+
+        n_threads = 20
+        barrier = threading.Barrier(n_threads)
+        errors: list[Exception] = []
+
+        fake_clients = [SimpleNamespace(client=_FakeClient()) for _ in range(n_threads)]
+
+        def _worker(idx: int) -> None:
+            try:
+                barrier.wait()
+                backend._set_backend(
+                    fake_clients[idx],  # type: ignore[arg-type]
+                    garth_home=f"/tmp/home_{idx}",
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=_worker, args=(i,)) for i in range(n_threads)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        # After all writes, the singleton must be one of the fake clients.
+        assert backend._backend in fake_clients
+
+    def test_require_backend_raises_when_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(backend, "_backend", None)
+        with pytest.raises(RuntimeError, match="not authenticated"):
+            backend._require_backend()
+
+    def test_require_backend_returns_client_when_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = SimpleNamespace(client=_FakeClient())
+        monkeypatch.setattr(backend, "_backend", fake)
+        result = backend._require_backend()
+        assert result is fake
+
+    def test_set_backend_updates_both_globals(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(backend, "_backend", None)
+        monkeypatch.setattr(backend, "_garth_home", None)
+
+        fake = SimpleNamespace(client=_FakeClient())
+        backend._set_backend(fake, garth_home="/tmp/test_home")  # type: ignore[arg-type]
+
+        assert backend._backend is fake
+        assert backend._garth_home == "/tmp/test_home"
+
+    def test_concurrent_require_backend_never_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_require_backend called from many threads must always return the set client."""
+        fake = SimpleNamespace(client=_FakeClient())
+        monkeypatch.setattr(backend, "_backend", fake)
+
+        n_threads = 30
+        barrier = threading.Barrier(n_threads)
+        results: list[Any] = []
+        errors: list[Exception] = []
+
+        def _worker() -> None:
+            try:
+                barrier.wait()
+                results.append(backend._require_backend())
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_worker) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        assert all(r is fake for r in results)

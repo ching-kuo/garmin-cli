@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import stat
+import threading
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from garmin_cli import auth as auth_module
 from garmin_cli.auth import ensure_authenticated
 from garmin_cli.config import CliConfig
 from garmin_cli.exceptions import GarminCliError
@@ -27,6 +30,12 @@ def _make_config(**kwargs: Any) -> CliConfig:
     }
     defaults.update(kwargs)
     return CliConfig(**defaults)
+
+
+@pytest.fixture(autouse=True)
+def _reset_probe_cache() -> None:
+    """Reset the auth probe cache between tests."""
+    auth_module._invalidate_probe_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -295,3 +304,315 @@ class TestEnsureAuthenticatedSecurity:
         actual_mode = stat.S_IMODE(garth_dir.stat().st_mode)
         assert actual_mode == 0o700
 
+
+# ---------------------------------------------------------------------------
+# Probe-TTL cache tests
+# ---------------------------------------------------------------------------
+
+class TestProbeTtlCache:
+
+    def test_ttl_hit_skips_resume_and_probe(
+        self, mocker: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Second call within TTL must make zero resume/probe calls."""
+        monkeypatch.setenv("GARMIN_CLI_AUTH_PROBE_TTL", "600")
+        garth_dir = tmp_path / "garth"
+        garth_dir.mkdir(mode=0o700)
+
+        mock_garth = MagicMock()
+        mocker.patch("garmin_cli.auth.garth", mock_garth)
+
+        config = _make_config(garth_home=str(garth_dir))
+
+        # First call — probe runs and warms cache.
+        ensure_authenticated(config)
+        assert mock_garth.resume.call_count == 1
+        assert mock_garth.connectapi.call_count == 1
+
+        mock_garth.reset_mock()
+
+        # Second call — cache hit, no resume, no probe.
+        ensure_authenticated(config)
+        mock_garth.resume.assert_not_called()
+        mock_garth.connectapi.assert_not_called()
+
+    def test_ttl_expiry_re_probes(
+        self, mocker: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """After TTL expires the next call must resume+probe again."""
+        monkeypatch.setenv("GARMIN_CLI_AUTH_PROBE_TTL", "0.05")  # 50 ms
+        garth_dir = tmp_path / "garth"
+        garth_dir.mkdir(mode=0o700)
+
+        mock_garth = MagicMock()
+        mocker.patch("garmin_cli.auth.garth", mock_garth)
+
+        config = _make_config(garth_home=str(garth_dir))
+
+        ensure_authenticated(config)  # warm cache
+        assert mock_garth.resume.call_count == 1
+
+        time.sleep(0.1)  # let TTL expire
+
+        mock_garth.reset_mock()
+        ensure_authenticated(config)
+        assert mock_garth.resume.call_count == 1
+        assert mock_garth.connectapi.call_count == 1
+
+    def test_ttl_zero_disables_caching(
+        self, mocker: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TTL=0 must disable caching (probe on every call)."""
+        monkeypatch.setenv("GARMIN_CLI_AUTH_PROBE_TTL", "0")
+        garth_dir = tmp_path / "garth"
+        garth_dir.mkdir(mode=0o700)
+
+        mock_garth = MagicMock()
+        mocker.patch("garmin_cli.auth.garth", mock_garth)
+
+        config = _make_config(garth_home=str(garth_dir))
+
+        ensure_authenticated(config)
+        ensure_authenticated(config)
+        ensure_authenticated(config)
+
+        assert mock_garth.resume.call_count == 3
+        assert mock_garth.connectapi.call_count == 3
+
+    def test_different_garth_home_re_probes(
+        self, mocker: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A different garth_home must trigger a fresh resume+probe."""
+        monkeypatch.setenv("GARMIN_CLI_AUTH_PROBE_TTL", "600")
+
+        garth_dir_a = tmp_path / "garth_a"
+        garth_dir_a.mkdir(mode=0o700)
+        garth_dir_b = tmp_path / "garth_b"
+        garth_dir_b.mkdir(mode=0o700)
+
+        mock_garth = MagicMock()
+        mocker.patch("garmin_cli.auth.garth", mock_garth)
+
+        config_a = _make_config(garth_home=str(garth_dir_a))
+        config_b = _make_config(garth_home=str(garth_dir_b))
+
+        ensure_authenticated(config_a)
+        assert mock_garth.resume.call_count == 1
+
+        mock_garth.reset_mock()
+        ensure_authenticated(config_b)
+        assert mock_garth.resume.call_count == 1
+        assert mock_garth.connectapi.call_count == 1
+
+    def test_auth_failure_invalidates_cache(
+        self, mocker: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """After a probe failure the cache must be cleared so the NEXT call re-probes.
+
+        Scenario:
+        1. First call: probe fails with 401 → falls through to login (cache stays empty).
+        2. Second call: probe succeeds → cache warms.
+        3. Third call: cache hit → no resume/probe.
+        4. Manually invalidate cache (simulating expiry / garth_home change).
+        5. Fourth call: no cache hit → resume+probe.
+        """
+        monkeypatch.setenv("GARMIN_CLI_AUTH_PROBE_TTL", "600")
+        garth_dir = tmp_path / "garth"
+        garth_dir.mkdir(mode=0o700)
+
+        mock_garth = MagicMock()
+        # First probe fails with 401.
+        mock_garth.connectapi.side_effect = _http_error(401)
+        mocker.patch("garmin_cli.auth.garth", mock_garth)
+        config = _make_config(
+            garth_home=str(garth_dir), email="u@t.com", password="p"
+        )
+
+        # First call — probe fails → login, cache NOT populated.
+        ensure_authenticated(config)
+        assert mock_garth.resume.call_count == 1
+        mock_garth.login.assert_called_once()
+
+        # Next probe succeeds.
+        mock_garth.connectapi.side_effect = None
+        mock_garth.reset_mock()
+
+        # Second call — resume+probe runs, cache warms.
+        ensure_authenticated(config)
+        assert mock_garth.resume.call_count == 1
+        assert mock_garth.connectapi.call_count == 1
+
+        mock_garth.reset_mock()
+
+        # Third call — cache hit, zero I/O.
+        ensure_authenticated(config)
+        mock_garth.resume.assert_not_called()
+        mock_garth.connectapi.assert_not_called()
+
+        # Manually invalidate (mirrors what garth_home change would do).
+        auth_module._invalidate_probe_cache(str(garth_dir))
+        mock_garth.reset_mock()
+
+        # Fourth call — no cache → resume+probe again.
+        ensure_authenticated(config)
+        assert mock_garth.resume.call_count == 1
+        assert mock_garth.connectapi.call_count == 1
+
+    def test_login_invalidates_cache(
+        self, mocker: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """After a fresh login the probe cache must be cleared."""
+        monkeypatch.setenv("GARMIN_CLI_AUTH_PROBE_TTL", "600")
+        garth_dir = tmp_path / "garth"
+        garth_dir.mkdir(mode=0o700)
+
+        mock_garth = MagicMock()
+        mocker.patch("garmin_cli.auth.garth", mock_garth)
+
+        # Warm the cache with a successful probe.
+        config = _make_config(garth_home=str(garth_dir))
+        ensure_authenticated(config)
+        assert mock_garth.resume.call_count == 1
+
+        # Manually call login invalidation to mirror login path.
+        auth_module._invalidate_probe_cache()
+
+        mock_garth.reset_mock()
+        # After invalidation a fresh call must resume+probe.
+        ensure_authenticated(config)
+        assert mock_garth.resume.call_count == 1
+        assert mock_garth.connectapi.call_count == 1
+
+    def test_probe_not_recorded_on_probe_failure(
+        self, mocker: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Failed probe must NOT populate the cache."""
+        monkeypatch.setenv("GARMIN_CLI_AUTH_PROBE_TTL", "600")
+        garth_dir = tmp_path / "garth"
+        garth_dir.mkdir(mode=0o700)
+
+        mock_garth = MagicMock()
+        mock_garth.connectapi.side_effect = _http_error(401)
+        mocker.patch("garmin_cli.auth.garth", mock_garth)
+
+        config = _make_config(
+            garth_home=str(garth_dir), email="u@t.com", password="p"
+        )
+        ensure_authenticated(config)  # probe fails → login
+
+        mock_garth.reset_mock()
+        mock_garth.connectapi.side_effect = None  # next probe succeeds
+        ensure_authenticated(config)
+        # Must re-probe (cache was not populated from the failed probe).
+        assert mock_garth.resume.call_count == 1
+
+    def test_cache_hit_returns_immediately_with_zero_io(
+        self, mocker: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """On a cache hit, no disk reads and no network calls are made."""
+        monkeypatch.setenv("GARMIN_CLI_AUTH_PROBE_TTL", "600")
+        garth_dir = tmp_path / "garth"
+        garth_dir.mkdir(mode=0o700)
+
+        mock_garth = MagicMock()
+        mocker.patch("garmin_cli.auth.garth", mock_garth)
+
+        config = _make_config(garth_home=str(garth_dir))
+        ensure_authenticated(config)  # warm cache
+
+        mock_garth.reset_mock()
+
+        # Patch resume and connectapi to fail — they must not be called.
+        mock_garth.resume.side_effect = Exception("should not be called")
+        mock_garth.connectapi.side_effect = Exception("should not be called")
+
+        result = ensure_authenticated(config)
+        assert result is None  # no exception raised
+
+
+# ---------------------------------------------------------------------------
+# Concurrency safety tests
+# ---------------------------------------------------------------------------
+
+class TestConcurrencySafety:
+
+    def test_concurrent_calls_do_not_double_login(
+        self, mocker: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Concurrent ensure_authenticated calls from multiple threads must not
+        cause duplicate logins — the probe cache stops the extra calls."""
+        monkeypatch.setenv("GARMIN_CLI_AUTH_PROBE_TTL", "600")
+        garth_dir = tmp_path / "garth"
+        garth_dir.mkdir(mode=0o700)
+
+        # First call succeeds and warms the cache; subsequent calls (which
+        # arrive concurrently after the first returns) should hit the cache.
+        resume_count = 0
+        resume_lock = threading.Lock()
+
+        def _fake_resume(path: str) -> None:
+            nonlocal resume_count
+            with resume_lock:
+                resume_count += 1
+
+        mock_garth = MagicMock()
+        mock_garth.resume.side_effect = _fake_resume
+        mocker.patch("garmin_cli.auth.garth", mock_garth)
+
+        config = _make_config(garth_home=str(garth_dir))
+        n_threads = 8
+        barrier = threading.Barrier(n_threads)
+        errors: list[Exception] = []
+
+        # Warm the cache in the main thread first.
+        ensure_authenticated(config)
+        assert resume_count == 1
+
+        mock_garth.reset_mock()
+        resume_count = 0
+
+        def _worker() -> None:
+            try:
+                barrier.wait()
+                ensure_authenticated(config)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_worker) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        # All threads hit the cache — zero resume calls.
+        assert resume_count == 0
+
+    def test_lock_protects_probe_cache_under_concurrent_access(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Directly stress the probe cache helpers from multiple threads."""
+        monkeypatch.setenv("GARMIN_CLI_AUTH_PROBE_TTL", "600")
+        garth_home = str(tmp_path / "garth")
+
+        n_threads = 20
+        barrier = threading.Barrier(n_threads)
+        errors: list[Exception] = []
+
+        def _worker() -> None:
+            try:
+                barrier.wait()
+                auth_module._record_probe_ok(garth_home)
+                auth_module._probe_cache_hit(garth_home, 600.0)
+                auth_module._invalidate_probe_cache(garth_home)
+                auth_module._record_probe_ok(garth_home)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_worker) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors

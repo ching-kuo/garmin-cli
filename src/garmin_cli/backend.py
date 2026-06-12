@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import types
 from datetime import date
 from typing import Any
@@ -19,6 +20,9 @@ from garmin_cli.token_store import (
 logger = logging.getLogger(__name__)
 
 _DEFAULT_HTTP_TIMEOUT: float = 30.0
+
+# RLock so that the same thread can re-acquire (e.g. login -> _set_backend).
+_backend_lock: threading.RLock = threading.RLock()
 
 
 def _resolve_http_timeout() -> float:
@@ -85,20 +89,23 @@ def get_raw_fallback_registry() -> list[dict[str, str]]:
 
 
 def _require_backend() -> Garmin:
-    if _backend is None:
-        raise RuntimeError("Garmin backend is not authenticated")
-    return _backend
+    with _backend_lock:
+        if _backend is None:
+            raise RuntimeError("Garmin backend is not authenticated")
+        return _backend
 
 
 def _set_backend(client: Garmin, garth_home: str | None = None) -> None:
     global _backend, _garth_home
-    _backend = client
-    _garth_home = garth_home
+    with _backend_lock:
+        _backend = client
+        _garth_home = garth_home
 
 
 def _normalize_home(path: str | None = None) -> str | None:
     if path is None:
-        return _garth_home
+        with _backend_lock:
+            return _garth_home
     return str(ensure_secure_directory(path))
 
 
@@ -148,12 +155,13 @@ def resume(garth_home: str) -> None:
 
 def save(garth_home: str) -> None:
     """Persist the current backend tokenstore into the configured Garmin home."""
-    client = _require_backend()
-    directory = ensure_secure_directory(garth_home, create=True)
-    client.client.dump(str(directory))
-    secure_token_file(str(directory))
-    _set_backend(client, str(directory))
-    logger.debug("Garmin session saved to %s", directory)
+    with _backend_lock:
+        client = _require_backend()
+        directory = ensure_secure_directory(garth_home, create=True)
+        client.client.dump(str(directory))
+        secure_token_file(str(directory))
+        _set_backend(client, str(directory))
+    logger.debug("Garmin session saved to %s", garth_home)
 
 
 def connectapi(
