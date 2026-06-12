@@ -7,6 +7,8 @@ from typing import Any
 import click
 
 from garmin_cli.auth import ensure_authenticated
+from garmin_cli.commands._options import validate_limit
+from garmin_cli.date_utils import CLICK_DATE_TYPE
 from garmin_cli.endpoints.workouts import (
     create_workout,
     delete_workout,
@@ -43,11 +45,7 @@ def workout() -> None:
 @click.pass_context
 def list_cmd(ctx: click.Context, limit: int) -> None:
     """List workouts."""
-    if limit <= 0:
-        raise GarminCliError(
-            error="--limit must be greater than 0",
-            error_code="INVALID_INPUT",
-        )
+    validate_limit(limit)
     ensure_authenticated(ctx.obj["config"])
     raw = list_workouts(limit=limit)
     data = serialize_workout_summary(raw)
@@ -66,8 +64,8 @@ def get_cmd(ctx: click.Context, workout_id: str) -> None:
 
 
 @workout.command("calendar")
-@click.option("--from", "date_from", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
-@click.option("--to", "date_to", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
+@click.option("--from", "date_from", type=CLICK_DATE_TYPE, default=None)
+@click.option("--to", "date_to", type=CLICK_DATE_TYPE, default=None)
 @click.option("--days", type=int, default=None)
 @click.option("--ahead", type=int, default=None)
 @click.pass_context

@@ -7,6 +7,7 @@ from typing import Any, Callable
 import click
 
 from garmin_cli.auth import ensure_authenticated
+from garmin_cli.commands._options import date_range_options
 from garmin_cli.date_utils import CLICK_DATE_TYPE, resolve_click_dates
 from garmin_cli.endpoints.health import (
     get_body_battery_range,
@@ -75,11 +76,7 @@ def health() -> None:
 
 
 @health.command()
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--ahead", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options(include_ahead=True)
 @click.pass_context
 def sleep(
     ctx: click.Context,
@@ -105,10 +102,7 @@ def sleep(
 
 
 @health.command()
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def hrv(
     ctx: click.Context,
@@ -132,10 +126,7 @@ def hrv(
 
 
 @health.command()
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def weight(
     ctx: click.Context,
@@ -159,10 +150,7 @@ def weight(
 
 
 @health.command("body-battery")
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def body_battery(
     ctx: click.Context,
@@ -186,10 +174,7 @@ def body_battery(
 
 
 @health.command()
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def stress(
     ctx: click.Context,
@@ -213,10 +198,7 @@ def stress(
 
 
 @health.command()
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def spo2(
     ctx: click.Context,
@@ -240,10 +222,7 @@ def spo2(
 
 
 @health.command("resting-hr")
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def resting_hr(
     ctx: click.Context,
@@ -267,10 +246,7 @@ def resting_hr(
 
 
 @health.command("readiness")
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def readiness(
     ctx: click.Context,

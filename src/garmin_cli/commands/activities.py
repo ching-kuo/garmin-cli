@@ -6,6 +6,7 @@ from datetime import datetime
 import click
 
 from garmin_cli.auth import ensure_authenticated
+from garmin_cli.commands._options import validate_limit
 from garmin_cli.date_utils import CLICK_DATE_TYPE, resolve_click_dates
 from garmin_cli.endpoints.activities import (
     activity_type_key,
@@ -74,6 +75,7 @@ def list_cmd(
     date_to: datetime | None,
 ) -> None:
     """List recent activities, optionally filtered by date range."""
+    validate_limit(limit)
     has_date_args = any(x is not None for x in (value_date, days, date_from, date_to))
     start_date = None
     end_date = None

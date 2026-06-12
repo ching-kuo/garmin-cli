@@ -6,6 +6,7 @@ from datetime import date
 import click
 
 from garmin_cli.auth import ensure_authenticated
+from garmin_cli.date_utils import CLICK_DATE_TYPE
 from garmin_cli.endpoints.performance import (
     get_all_thresholds,
     get_latest_vo2max,
@@ -40,7 +41,7 @@ def thresholds_cmd(ctx: click.Context) -> None:
 
 
 @performance.command("vo2max")
-@click.option("--date", "value_date", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
+@click.option("--date", "value_date", type=CLICK_DATE_TYPE, default=None)
 @click.pass_context
 def vo2max_cmd(ctx: click.Context, value_date: date | None) -> None:
     """Get VO2 max for a day."""
