@@ -13,7 +13,7 @@ from garmin_cli.metrics.registry import (
 from garmin_cli.metrics.sport_profile import (
     UNION_COLUMNS,
     SportProfile,
-    columns_for_sport,
+    columns_for_sport,  # noqa: F401  (re-exported: commands/activities.py imports from here)
     profile_for,
 )
 
@@ -738,7 +738,7 @@ def serialize_activity_hr_zones(zones: Any) -> list[dict[str, Any]]:
                 "minutes_in_zone": _minutes(seconds),
             }
         )
-    rows.sort(key=lambda row: (row.get("zone") if row.get("zone") is not None else 999))
+    rows.sort(key=lambda row: (row.get("zone") if row.get("zone") is not None else 999))  # type: ignore[arg-type,return-value]
     return rows
 
 

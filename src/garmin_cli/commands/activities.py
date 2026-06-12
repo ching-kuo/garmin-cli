@@ -88,7 +88,7 @@ def list_cmd(
     date_range = (start_date, end_date) if start_date is not None else None
     render_output(
         ctx.obj["config"].output_format, "activity list", data, COLUMNS_ACTIVITY_SUMMARY,
-        date_range=date_range,
+        date_range=date_range,  # type: ignore[arg-type]
     )
 
 
@@ -201,7 +201,7 @@ def get_cmd(ctx: click.Context, activity_id: str, detail: bool, include_laps: bo
         if include_laps:
             click.echo("")
             click.echo("Laps:")
-            echo_table(laps_rows, columns_for_lap(laps_profile))
+            echo_table(laps_rows, columns_for_lap(laps_profile))  # type: ignore[arg-type]
         if manifest:
             footnote = render_capability_footnote(*manifest_summary_counts(manifest))
             if footnote:
@@ -219,7 +219,7 @@ def get_cmd(ctx: click.Context, activity_id: str, detail: bool, include_laps: bo
             echo_csv(data, csv_columns)
         if include_laps:
             click.echo("")
-            lap_columns = columns_for_lap(laps_profile)
+            lap_columns = columns_for_lap(laps_profile)  # type: ignore[arg-type]
             echo_csv(laps_rows, lap_columns)
 
 

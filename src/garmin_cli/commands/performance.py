@@ -45,7 +45,7 @@ def thresholds_cmd(ctx: click.Context) -> None:
 def vo2max_cmd(ctx: click.Context, value_date: date | None) -> None:
     """Get VO2 max for a day."""
     ensure_authenticated(ctx.obj["config"])
-    raw = get_vo2max(value_date.date()) if value_date else get_latest_vo2max()
+    raw = get_vo2max(value_date.date()) if value_date else get_latest_vo2max()  # type: ignore[attr-defined]
     data = serialize_vo2max(raw)
     if value_date is None:
         data = select_latest_dated_rows(data)
