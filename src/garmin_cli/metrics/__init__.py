@@ -6,6 +6,13 @@ capability manifests all derive from registry entries.
 """
 from __future__ import annotations
 
+from garmin_cli.metrics.field_table import (
+    FieldEntry,
+    FieldTable,
+    project_row,
+    resolve_field,
+    validate_table_coverage,
+)
 from garmin_cli.metrics.registry import (
     CYCLING_TYPE_KEYS,
     LAP_SWIM_TYPE_KEYS,
@@ -28,4 +35,10 @@ __all__ = (
     "MetricEntry",
     "for_sport",
     "resolve",
+    # --- Domain-agnostic flat field-table core ---
+    "FieldEntry",
+    "FieldTable",
+    "project_row",
+    "resolve_field",
+    "validate_table_coverage",
 )

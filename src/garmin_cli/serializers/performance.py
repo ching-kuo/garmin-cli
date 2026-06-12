@@ -2,11 +2,22 @@
 
 Covers lactate thresholds, VO2 max, lactate-threshold zones, race predictions,
 and endurance/hill scores, plus their COLUMNS_* constants.
+
+The flat-row serializers (race predictions, endurance score, hill score,
+thresholds) are declared as
+:class:`~garmin_cli.metrics.field_table.FieldTable` instances -- each column's
+wire source(s) and converter live in one entry, and the table constructor keeps
+the entries in lockstep with the published COLUMNS_* order at import time. Two
+serializers keep bespoke code because they are structural rather than flat:
+:func:`serialize_vo2max` fans one wire item out into one row per sport sub-dict,
+and :func:`serialize_zones` merges multiple flat lactate samples across items
+(via :func:`parse_flat_lactate`) and coalesces two pace representations.
 """
 from __future__ import annotations
 
 from typing import Any
 
+from garmin_cli.metrics import FieldEntry, FieldTable, validate_table_coverage
 from garmin_cli.serializers._common import _coalesce, _listify
 from garmin_cli.units import format_pace_seconds, pace_from_speed, parse_flat_lactate
 
@@ -21,6 +32,66 @@ COLUMNS_ZONES = ("sport", "lt_hr_bpm", "lt_pace")
 _VO2MAX_NON_SPORT_KEYS: frozenset[str] = frozenset({"userId", "heatAltitudeAcclimation"})
 
 
+# --- Declarative field tables ------------------------------------------------
+
+_RACE_PREDICTIONS_TABLE = FieldTable(
+    name="race_predictions",
+    columns=COLUMNS_RACE_PREDICTIONS,
+    entries=(
+        FieldEntry(
+            "race_type",
+            (("raceType",), ("predictionType",), ("eventType",), ("displayName",)),
+        ),
+        FieldEntry(
+            "predicted_time_seconds",
+            (
+                ("predictedTimeInSeconds",),
+                ("predictedTime",),
+                ("timeInSeconds",),
+                ("time",),
+            ),
+        ),
+        FieldEntry(
+            "distance_meters",
+            (("distanceMeters",), ("raceDistance",), ("distance",)),
+        ),
+    ),
+)
+
+_ENDURANCE_SCORE_TABLE = FieldTable(
+    name="endurance_score",
+    columns=COLUMNS_ENDURANCE_SCORE,
+    entries=(
+        FieldEntry("date", (("calendarDate",),)),
+        FieldEntry("overall_score", (("overallScore",),)),
+        FieldEntry("endurance_classification", (("enduranceClassification",),)),
+    ),
+)
+
+_HILL_SCORE_TABLE = FieldTable(
+    name="hill_score",
+    columns=COLUMNS_HILL_SCORE,
+    entries=(
+        FieldEntry("date", (("calendarDate",),)),
+        FieldEntry("overall_score", (("overallScore",),)),
+        FieldEntry("endurance_score", (("enduranceScore",),)),
+        FieldEntry("strength_score", (("strengthScore",),)),
+    ),
+)
+
+_THRESHOLDS_TABLE = FieldTable(
+    name="thresholds",
+    columns=COLUMNS_THRESHOLDS,
+    entries=(
+        FieldEntry("sport", (("sport",),)),
+        FieldEntry("lt_hr_bpm", (("lactateThresholdHeartRate",),)),
+        FieldEntry("lt_pace", (("lactateThresholdPace",),), format_pace_seconds),
+        FieldEntry("ftp_watts", (("functionalThresholdPower",),)),
+        FieldEntry("weight_kg", (("weight",),)),
+    ),
+)
+
+
 def serialize_race_predictions(raw: Any) -> list[dict[str, Any]]:
     if isinstance(raw, dict):
         items = _listify(
@@ -28,51 +99,15 @@ def serialize_race_predictions(raw: Any) -> list[dict[str, Any]]:
         )
     else:
         items = _listify(raw)
-    return [
-        {
-            "race_type": _coalesce(
-                item.get("raceType"),
-                item.get("predictionType"),
-                item.get("eventType"),
-                item.get("displayName"),
-            ),
-            "predicted_time_seconds": _coalesce(
-                item.get("predictedTimeInSeconds"),
-                item.get("predictedTime"),
-                item.get("timeInSeconds"),
-                item.get("time"),
-            ),
-            "distance_meters": _coalesce(
-                item.get("distanceMeters"),
-                item.get("raceDistance"),
-                item.get("distance"),
-            ),
-        }
-        for item in items
-    ]
+    return _RACE_PREDICTIONS_TABLE.project_all(items)
 
 
 def serialize_endurance_score(raw: Any) -> list[dict[str, Any]]:
-    return [
-        {
-            "date": item.get("calendarDate"),
-            "overall_score": item.get("overallScore"),
-            "endurance_classification": item.get("enduranceClassification"),
-        }
-        for item in _listify(raw)
-    ]
+    return _ENDURANCE_SCORE_TABLE.project_all(_listify(raw))
 
 
 def serialize_hill_score(raw: Any) -> list[dict[str, Any]]:
-    return [
-        {
-            "date": item.get("calendarDate"),
-            "overall_score": item.get("overallScore"),
-            "endurance_score": item.get("enduranceScore"),
-            "strength_score": item.get("strengthScore"),
-        }
-        for item in _listify(raw)
-    ]
+    return _HILL_SCORE_TABLE.project_all(_listify(raw))
 
 
 def serialize_vo2max(raw: Any) -> list[dict[str, Any]]:
@@ -140,16 +175,32 @@ def serialize_zones(raw: Any) -> list[dict[str, Any]]:
 
 def serialize_thresholds(raw: Any) -> list[dict[str, Any]]:
     items = raw.get("thresholds", []) if isinstance(raw, dict) else []
-    rows: list[dict[str, Any]] = []
-    for item in items:
-        threshold = item if isinstance(item, dict) else {}
-        rows.append(
-            {
-                "sport": threshold.get("sport"),
-                "lt_hr_bpm": threshold.get("lactateThresholdHeartRate"),
-                "lt_pace": format_pace_seconds(threshold.get("lactateThresholdPace")),
-                "ftp_watts": threshold.get("functionalThresholdPower"),
-                "weight_kg": threshold.get("weight"),
-            }
-        )
-    return rows
+    # Legacy emitted an all-None row for non-dict items (``{}.get(...)``); map
+    # non-dicts to ``{}`` so row count and shape stay byte-identical.
+    return [
+        _THRESHOLDS_TABLE.project(item if isinstance(item, dict) else {})
+        for item in items
+    ]
+
+
+# Import-time guard: COLUMNS_* must stay in lockstep with the declarative
+# tables. VO2 max (per-sport fan-out) and zones (cross-item lactate merge) are
+# structural and intentionally have no backing table.
+validate_table_coverage(
+    "performance",
+    {
+        "COLUMNS_RACE_PREDICTIONS": COLUMNS_RACE_PREDICTIONS,
+        "COLUMNS_ENDURANCE_SCORE": COLUMNS_ENDURANCE_SCORE,
+        "COLUMNS_HILL_SCORE": COLUMNS_HILL_SCORE,
+        "COLUMNS_THRESHOLDS": COLUMNS_THRESHOLDS,
+        "COLUMNS_VO2MAX": COLUMNS_VO2MAX,
+        "COLUMNS_ZONES": COLUMNS_ZONES,
+    },
+    (
+        _RACE_PREDICTIONS_TABLE,
+        _ENDURANCE_SCORE_TABLE,
+        _HILL_SCORE_TABLE,
+        _THRESHOLDS_TABLE,
+    ),
+    exempt=frozenset({"COLUMNS_VO2MAX", "COLUMNS_ZONES"}),
+)
