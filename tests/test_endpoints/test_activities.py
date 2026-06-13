@@ -467,13 +467,14 @@ class TestGetMultisportChildren:
     def test_reraises_auth_error(self, mocker: Any) -> None:
         parent = {"childIds": [111]}
         mock_garth = MagicMock()
-        # 401 is not caught by _make_request as GarminCliError, so it
-        # propagates as a raw Exception through get_multisport_children.
+        # 401 is mapped to GarminCliError(AUTH_FAILED) by _make_request and
+        # propagates through get_multisport_children with that code.
         mock_garth.connectapi.side_effect = _http_error(401)
         mocker.patch("garmin_cli.endpoints.activities.garth", mock_garth)
 
-        with pytest.raises(Exception, match="401"):
+        with pytest.raises(GarminCliError) as exc_info:
             get_multisport_children(parent)
+        assert exc_info.value.error_code == "AUTH_FAILED"
 
     def test_reraises_garmin_auth_error(self, mocker: Any) -> None:
         parent = {"childIds": [111]}

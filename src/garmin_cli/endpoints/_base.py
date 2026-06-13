@@ -139,6 +139,8 @@ def _make_request(
     return _retry_loop(
         lambda: connectapi_fn(url, params=params),
         immediate_errors={
+            401: ("Authentication failed.", "AUTH_FAILED"),
+            403: ("Authentication failed.", "AUTH_FAILED"),
             404: (f"Not found: {url}", "NOT_FOUND"),
         },
     )
@@ -154,6 +156,8 @@ def _make_typed_request(typed_method: Callable[..., Any], *args: Any, **kwargs: 
     return _retry_loop(
         lambda: typed_method(*args, **kwargs),
         immediate_errors={
+            401: ("Authentication failed.", "AUTH_FAILED"),
+            403: ("Authentication failed.", "AUTH_FAILED"),
             404: ("Not found.", "NOT_FOUND"),
         },
     )

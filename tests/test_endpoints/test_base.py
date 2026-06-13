@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from garmin_cli.endpoints._base import (
+    _make_request,
+    _make_typed_request,
     _resolve_daily_call_delay,
     _resolve_retry_delays,
     _make_write_request,
@@ -150,6 +152,48 @@ class TestMakeWriteRequest:
 # ---------------------------------------------------------------------------
 # _resolve_daily_call_delay
 # ---------------------------------------------------------------------------
+
+class TestMakeRequestAuthErrors:
+    """Read paths must map 401/403 to AUTH_FAILED like the write path does."""
+
+    def test_make_request_401_raises_auth_failed(self, mocker: Any) -> None:
+        mocker.patch("time.sleep")
+        mock_fn = MagicMock(side_effect=_http_error(401))
+        with pytest.raises(GarminCliError) as exc_info:
+            _make_request(mock_fn, "/some/url")
+        assert exc_info.value.error_code == "AUTH_FAILED"
+        assert mock_fn.call_count == 1
+
+    def test_make_request_403_raises_auth_failed(self, mocker: Any) -> None:
+        mocker.patch("time.sleep")
+        mock_fn = MagicMock(side_effect=_http_error(403))
+        with pytest.raises(GarminCliError) as exc_info:
+            _make_request(mock_fn, "/some/url")
+        assert exc_info.value.error_code == "AUTH_FAILED"
+        assert mock_fn.call_count == 1
+
+    def test_make_request_404_still_not_found(self, mocker: Any) -> None:
+        mocker.patch("time.sleep")
+        mock_fn = MagicMock(side_effect=_http_error(404))
+        with pytest.raises(GarminCliError) as exc_info:
+            _make_request(mock_fn, "/some/url")
+        assert exc_info.value.error_code == "NOT_FOUND"
+
+    def test_make_typed_request_401_raises_auth_failed(self, mocker: Any) -> None:
+        mocker.patch("time.sleep")
+        mock_fn = MagicMock(side_effect=_http_error(401))
+        with pytest.raises(GarminCliError) as exc_info:
+            _make_typed_request(mock_fn, 123)
+        assert exc_info.value.error_code == "AUTH_FAILED"
+        assert mock_fn.call_count == 1
+
+    def test_make_typed_request_403_raises_auth_failed(self, mocker: Any) -> None:
+        mocker.patch("time.sleep")
+        mock_fn = MagicMock(side_effect=_http_error(403))
+        with pytest.raises(GarminCliError) as exc_info:
+            _make_typed_request(mock_fn, 123)
+        assert exc_info.value.error_code == "AUTH_FAILED"
+
 
 class TestResolveDailyCallDelay:
 
