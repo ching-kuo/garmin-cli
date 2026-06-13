@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from garmin_cli.endpoints._base import (
+    _resolve_daily_call_delay,
     _resolve_retry_delays,
     _make_write_request,
 )
@@ -144,6 +145,45 @@ class TestMakeWriteRequest:
         mock_fn = MagicMock(side_effect=RuntimeError("unexpected"))
         with pytest.raises(RuntimeError, match="unexpected"):
             _make_write_request(mock_fn, "POST", "/workout-service/workout", json={})
+
+
+# ---------------------------------------------------------------------------
+# _resolve_daily_call_delay
+# ---------------------------------------------------------------------------
+
+class TestResolveDailyCallDelay:
+
+    def test_default_when_env_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GARMIN_CLI_DAILY_CALL_DELAY", raising=False)
+        assert _resolve_daily_call_delay() == 0.5
+
+    def test_env_var_overrides_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_DAILY_CALL_DELAY", "0.1")
+        assert _resolve_daily_call_delay() == 0.1
+
+    def test_zero_is_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_DAILY_CALL_DELAY", "0")
+        assert _resolve_daily_call_delay() == 0.0
+
+    def test_invalid_string_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_DAILY_CALL_DELAY", "fast")
+        assert _resolve_daily_call_delay() == 0.5
+
+    def test_negative_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_DAILY_CALL_DELAY", "-1")
+        assert _resolve_daily_call_delay() == 0.5
+
+    def test_empty_env_var_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_DAILY_CALL_DELAY", "")
+        assert _resolve_daily_call_delay() == 0.5
+
+    def test_env_read_at_call_time(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GARMIN_CLI_DAILY_CALL_DELAY", raising=False)
+        first = _resolve_daily_call_delay()
+        monkeypatch.setenv("GARMIN_CLI_DAILY_CALL_DELAY", "2.5")
+        second = _resolve_daily_call_delay()
+        assert first == 0.5
+        assert second == 2.5
 
 
 # ---------------------------------------------------------------------------

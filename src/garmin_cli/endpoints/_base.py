@@ -9,6 +9,25 @@ from typing import Any, Callable
 from garmin_cli.exceptions import GarminCliError, extract_status_code
 
 _RETRY_DELAYS: list[float] = [2, 4, 8]
+_DEFAULT_DAILY_CALL_DELAY: float = 0.5
+
+
+def _resolve_daily_call_delay() -> float:
+    """Return the inter-call delay (seconds) used by ``_collect_daily_range``.
+
+    Reads ``GARMIN_CLI_DAILY_CALL_DELAY`` from the environment as a
+    non-negative float.  Any parse error or negative value causes the whole
+    env var to be ignored and the default (0.5 s) is used instead.
+    """
+    raw = os.environ.get("GARMIN_CLI_DAILY_CALL_DELAY", "")
+    if raw:
+        try:
+            value = float(raw)
+            if value >= 0:
+                return value
+        except ValueError:
+            pass
+    return _DEFAULT_DAILY_CALL_DELAY
 
 
 def _resolve_retry_delays() -> list[float]:
@@ -145,11 +164,12 @@ def _collect_daily_range(
     start: date,
     end: date,
 ) -> list[Any]:
+    delay = _resolve_daily_call_delay()
     items: list[Any] = []
     current = start
     while current <= end:
         items.append(getter(current))
         current += timedelta(days=1)
         if current <= end:
-            time.sleep(0.5)
+            time.sleep(delay)
     return items
