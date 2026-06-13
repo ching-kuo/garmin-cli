@@ -1,4 +1,4 @@
-"""Tests for extract_status_code and _make_write_request from garmin_cli.endpoints._base."""
+"""Tests for _make_write_request from garmin_cli.endpoints._base and extract_status_code from garmin_cli.exceptions."""
 from __future__ import annotations
 
 from typing import Any
@@ -6,8 +6,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from garmin_cli.endpoints._base import extract_status_code, _make_write_request
-from garmin_cli.exceptions import GarminCliError
+from garmin_cli.endpoints._base import (
+    _make_request,
+    _make_typed_request,
+    _resolve_daily_call_delay,
+    _resolve_retry_delays,
+    _make_write_request,
+)
+from garmin_cli.exceptions import GarminCliError, extract_status_code
 from tests.helpers import make_http_error as _http_error
 
 
@@ -141,3 +147,140 @@ class TestMakeWriteRequest:
         mock_fn = MagicMock(side_effect=RuntimeError("unexpected"))
         with pytest.raises(RuntimeError, match="unexpected"):
             _make_write_request(mock_fn, "POST", "/workout-service/workout", json={})
+
+
+# ---------------------------------------------------------------------------
+# _resolve_daily_call_delay
+# ---------------------------------------------------------------------------
+
+class TestMakeRequestAuthErrors:
+    """Read paths must map 401/403 to AUTH_FAILED like the write path does."""
+
+    def test_make_request_401_raises_auth_failed(self, mocker: Any) -> None:
+        mocker.patch("time.sleep")
+        mock_fn = MagicMock(side_effect=_http_error(401))
+        with pytest.raises(GarminCliError) as exc_info:
+            _make_request(mock_fn, "/some/url")
+        assert exc_info.value.error_code == "AUTH_FAILED"
+        assert mock_fn.call_count == 1
+
+    def test_make_request_403_raises_auth_failed(self, mocker: Any) -> None:
+        mocker.patch("time.sleep")
+        mock_fn = MagicMock(side_effect=_http_error(403))
+        with pytest.raises(GarminCliError) as exc_info:
+            _make_request(mock_fn, "/some/url")
+        assert exc_info.value.error_code == "AUTH_FAILED"
+        assert mock_fn.call_count == 1
+
+    def test_make_request_404_still_not_found(self, mocker: Any) -> None:
+        mocker.patch("time.sleep")
+        mock_fn = MagicMock(side_effect=_http_error(404))
+        with pytest.raises(GarminCliError) as exc_info:
+            _make_request(mock_fn, "/some/url")
+        assert exc_info.value.error_code == "NOT_FOUND"
+
+    def test_make_typed_request_401_raises_auth_failed(self, mocker: Any) -> None:
+        mocker.patch("time.sleep")
+        mock_fn = MagicMock(side_effect=_http_error(401))
+        with pytest.raises(GarminCliError) as exc_info:
+            _make_typed_request(mock_fn, 123)
+        assert exc_info.value.error_code == "AUTH_FAILED"
+        assert mock_fn.call_count == 1
+
+    def test_make_typed_request_403_raises_auth_failed(self, mocker: Any) -> None:
+        mocker.patch("time.sleep")
+        mock_fn = MagicMock(side_effect=_http_error(403))
+        with pytest.raises(GarminCliError) as exc_info:
+            _make_typed_request(mock_fn, 123)
+        assert exc_info.value.error_code == "AUTH_FAILED"
+
+
+class TestResolveDailyCallDelay:
+
+    def test_default_when_env_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GARMIN_CLI_DAILY_CALL_DELAY", raising=False)
+        assert _resolve_daily_call_delay() == 0.5
+
+    def test_env_var_overrides_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_DAILY_CALL_DELAY", "0.1")
+        assert _resolve_daily_call_delay() == 0.1
+
+    def test_zero_is_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_DAILY_CALL_DELAY", "0")
+        assert _resolve_daily_call_delay() == 0.0
+
+    def test_invalid_string_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_DAILY_CALL_DELAY", "fast")
+        assert _resolve_daily_call_delay() == 0.5
+
+    def test_negative_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_DAILY_CALL_DELAY", "-1")
+        assert _resolve_daily_call_delay() == 0.5
+
+    def test_empty_env_var_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_DAILY_CALL_DELAY", "")
+        assert _resolve_daily_call_delay() == 0.5
+
+    def test_env_read_at_call_time(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GARMIN_CLI_DAILY_CALL_DELAY", raising=False)
+        first = _resolve_daily_call_delay()
+        monkeypatch.setenv("GARMIN_CLI_DAILY_CALL_DELAY", "2.5")
+        second = _resolve_daily_call_delay()
+        assert first == 0.5
+        assert second == 2.5
+
+
+# ---------------------------------------------------------------------------
+# _resolve_retry_delays
+# ---------------------------------------------------------------------------
+
+class TestResolveRetryDelays:
+
+    def test_default_when_env_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GARMIN_CLI_RETRY_DELAYS", raising=False)
+        assert _resolve_retry_delays() == [2, 4, 8]
+
+    def test_env_var_overrides_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_RETRY_DELAYS", "1,2,4")
+        assert _resolve_retry_delays() == [1.0, 2.0, 4.0]
+
+    def test_float_values_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_RETRY_DELAYS", "0.5,1.5,3.0")
+        assert _resolve_retry_delays() == [0.5, 1.5, 3.0]
+
+    def test_invalid_string_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_RETRY_DELAYS", "not,valid")
+        assert _resolve_retry_delays() == [2, 4, 8]
+
+    def test_zero_value_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_RETRY_DELAYS", "1,0,4")
+        assert _resolve_retry_delays() == [2, 4, 8]
+
+    def test_negative_value_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_RETRY_DELAYS", "1,-2,4")
+        assert _resolve_retry_delays() == [2, 4, 8]
+
+    def test_empty_env_var_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_RETRY_DELAYS", "")
+        assert _resolve_retry_delays() == [2, 4, 8]
+
+    def test_env_read_at_call_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GARMIN_CLI_RETRY_DELAYS", raising=False)
+        first = _resolve_retry_delays()
+        monkeypatch.setenv("GARMIN_CLI_RETRY_DELAYS", "5,10")
+        second = _resolve_retry_delays()
+        assert first == [2, 4, 8]
+        assert second == [5.0, 10.0]
+
+    def test_retry_loop_uses_env_delay(
+        self, monkeypatch: pytest.MonkeyPatch, mocker: Any
+    ) -> None:
+        monkeypatch.setenv("GARMIN_CLI_RETRY_DELAYS", "0.1")
+        mock_sleep = mocker.patch("time.sleep")
+        mock_fn = MagicMock(side_effect=[_http_error(429), _http_error(429)])
+        with pytest.raises(GarminCliError) as exc_info:
+            _make_write_request(mock_fn, "POST", "/test", json={})
+        assert exc_info.value.error_code == "RATE_LIMITED"
+        mock_sleep.assert_called_once_with(0.1)

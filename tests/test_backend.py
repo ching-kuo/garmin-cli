@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import os
 import stat
+import threading
+import types
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -25,6 +28,11 @@ class _FakeClient:
     def __init__(self) -> None:
         self.dump_calls: list[str] = []
         self.put_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        self.run_request_kwargs: list[dict[str, Any]] = []
+
+    def _run_request(self, method: str, path: str, **kwargs: Any) -> _FakeResponse:
+        self.run_request_kwargs.append({"method": method, "path": path, **kwargs})
+        return _FakeResponse(200, {})
 
     def dump(self, path: str) -> None:
         self.dump_calls.append(path)
@@ -138,3 +146,203 @@ class TestConnectApi:
 def test_raw_fallback_registry_tracks_update_paths() -> None:
     capabilities = {entry["capability"] for entry in backend.get_raw_fallback_registry()}
     assert capabilities == {"workout_update"}
+
+
+class TestResolveHttpTimeout:
+    def test_default_is_30_when_env_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GARMIN_CLI_HTTP_TIMEOUT", raising=False)
+        assert backend._resolve_http_timeout() == 30.0
+
+    def test_env_var_overrides_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_HTTP_TIMEOUT", "45.5")
+        assert backend._resolve_http_timeout() == 45.5
+
+    def test_invalid_string_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_HTTP_TIMEOUT", "not-a-number")
+        assert backend._resolve_http_timeout() == 30.0
+
+    def test_zero_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_HTTP_TIMEOUT", "0")
+        assert backend._resolve_http_timeout() == 30.0
+
+    def test_negative_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_HTTP_TIMEOUT", "-5")
+        assert backend._resolve_http_timeout() == 30.0
+
+    def test_empty_env_var_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GARMIN_CLI_HTTP_TIMEOUT", "")
+        assert backend._resolve_http_timeout() == 30.0
+
+
+class TestApplyTimeout:
+    def test_login_calls_apply_timeout(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        garth_home = tmp_path / "garth"
+        garth_home.mkdir(mode=0o700)
+        monkeypatch.setattr(backend, "Garmin", _FakeGarmin)
+        captured: list[Any] = []
+        monkeypatch.setattr(backend, "_apply_timeout", lambda g: captured.append(g))
+
+        backend.login("user@example.com", "secret", garth_home=str(garth_home))
+
+        assert len(captured) == 1
+        assert captured[0] is _FakeGarmin.instances[0]
+
+    def test_resume_calls_apply_timeout(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        garth_home = tmp_path / "garth"
+        garth_home.mkdir(mode=0o700)
+        (garth_home / "garmin_tokens.json").write_text('{"di_token":"abc"}')
+        monkeypatch.setattr(backend, "Garmin", _FakeGarmin)
+        captured: list[Any] = []
+        monkeypatch.setattr(backend, "_apply_timeout", lambda g: captured.append(g))
+
+        backend.resume(str(garth_home))
+
+        assert len(captured) == 1
+        assert captured[0] is _FakeGarmin.instances[0]
+
+    def test_apply_timeout_wraps_run_request_with_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GARMIN_CLI_HTTP_TIMEOUT", raising=False)
+        fake_garmin = _FakeGarmin()
+        backend._apply_timeout(fake_garmin)  # type: ignore[arg-type]
+
+        fake_garmin.client._run_request("GET", "/test")
+
+        assert fake_garmin.client.run_request_kwargs[-1]["timeout"] == 30.0
+
+    def test_apply_timeout_uses_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GARMIN_CLI_HTTP_TIMEOUT", "60")
+        fake_garmin = _FakeGarmin()
+        backend._apply_timeout(fake_garmin)  # type: ignore[arg-type]
+
+        fake_garmin.client._run_request("GET", "/test")
+
+        assert fake_garmin.client.run_request_kwargs[-1]["timeout"] == 60.0
+
+    def test_apply_timeout_does_not_override_explicit_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GARMIN_CLI_HTTP_TIMEOUT", raising=False)
+        fake_garmin = _FakeGarmin()
+        backend._apply_timeout(fake_garmin)  # type: ignore[arg-type]
+
+        fake_garmin.client._run_request("GET", "/test", timeout=5)
+
+        assert fake_garmin.client.run_request_kwargs[-1]["timeout"] == 5
+
+    def test_apply_timeout_invalid_env_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GARMIN_CLI_HTTP_TIMEOUT", "bad")
+        fake_garmin = _FakeGarmin()
+        backend._apply_timeout(fake_garmin)  # type: ignore[arg-type]
+
+        fake_garmin.client._run_request("GET", "/test")
+
+        assert fake_garmin.client.run_request_kwargs[-1]["timeout"] == 30.0
+
+
+# ---------------------------------------------------------------------------
+# Lock / concurrency tests
+# ---------------------------------------------------------------------------
+
+class TestBackendLock:
+
+    def test_set_backend_is_thread_safe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Multiple threads calling _set_backend concurrently must not corrupt state."""
+        monkeypatch.setattr(backend, "_backend", None)
+        monkeypatch.setattr(backend, "_garth_home", None)
+
+        n_threads = 20
+        barrier = threading.Barrier(n_threads)
+        errors: list[Exception] = []
+
+        fake_clients = [SimpleNamespace(client=_FakeClient()) for _ in range(n_threads)]
+
+        def _worker(idx: int) -> None:
+            try:
+                barrier.wait()
+                backend._set_backend(
+                    fake_clients[idx],  # type: ignore[arg-type]
+                    garth_home=f"/tmp/home_{idx}",
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=_worker, args=(i,)) for i in range(n_threads)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        # After all writes, the singleton must be one of the fake clients.
+        assert backend._backend in fake_clients
+
+    def test_require_backend_raises_when_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(backend, "_backend", None)
+        with pytest.raises(RuntimeError, match="not authenticated"):
+            backend._require_backend()
+
+    def test_require_backend_returns_client_when_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = SimpleNamespace(client=_FakeClient())
+        monkeypatch.setattr(backend, "_backend", fake)
+        result = backend._require_backend()
+        assert result is fake
+
+    def test_set_backend_updates_both_globals(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(backend, "_backend", None)
+        monkeypatch.setattr(backend, "_garth_home", None)
+
+        fake = SimpleNamespace(client=_FakeClient())
+        backend._set_backend(fake, garth_home="/tmp/test_home")  # type: ignore[arg-type]
+
+        assert backend._backend is fake
+        assert backend._garth_home == "/tmp/test_home"
+
+    def test_concurrent_require_backend_never_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_require_backend called from many threads must always return the set client."""
+        fake = SimpleNamespace(client=_FakeClient())
+        monkeypatch.setattr(backend, "_backend", fake)
+
+        n_threads = 30
+        barrier = threading.Barrier(n_threads)
+        results: list[Any] = []
+        errors: list[Exception] = []
+
+        def _worker() -> None:
+            try:
+                barrier.wait()
+                results.append(backend._require_backend())
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_worker) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        assert all(r is fake for r in results)

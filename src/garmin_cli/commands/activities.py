@@ -2,14 +2,21 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 import click
 
 from garmin_cli.auth import ensure_authenticated
+from garmin_cli.commands._options import validate_limit
+from garmin_cli.exceptions import GarminCliError
 from garmin_cli.date_utils import CLICK_DATE_TYPE, resolve_click_dates
 from garmin_cli.endpoints.activities import (
     activity_type_key,
+    delete_activity,
+    download_activity,
+    extension_for_format,
     get_activity,
+    get_activity_details,
     get_activity_hr_in_timezones,
     get_activity_splits,
     get_activity_typed_splits,
@@ -17,9 +24,9 @@ from garmin_cli.endpoints.activities import (
     get_multisport_children,
     is_multisport_parent,
     list_activities,
+    upload_activity,
 )
-from garmin_cli.metrics.registry import LAP_SWIM_TYPE_KEYS
-from garmin_cli.metrics.sport_profile import SportProfile, profile_for
+from garmin_cli.metrics.sport_profile import SportProfile
 from garmin_cli.output import (
     echo_csv,
     echo_json,
@@ -29,20 +36,32 @@ from garmin_cli.output import (
     render_output,
 )
 from garmin_cli.serializers import (
+    COLUMNS_ACTIVITY_DELETE,
     COLUMNS_ACTIVITY_DETAIL,
+    COLUMNS_ACTIVITY_DOWNLOAD,
     COLUMNS_ACTIVITY_HR_ZONES,
     COLUMNS_ACTIVITY_SUMMARY,
+    COLUMNS_ACTIVITY_UPLOAD,
     COLUMNS_ACTIVITY_WEATHER,
+    COLUMNS_METRICS_DESCRIPTORS,
     COLUMNS_MULTISPORT_CHILDREN,
     columns_for_lap,
     columns_for_sport,
     manifest_summary_counts,
+    serialize_activity_delete,
     serialize_activity_detail,
+    serialize_activity_download,
     serialize_activity_hr_zones,
     serialize_activity_laps,
     serialize_activity_summary,
+    serialize_activity_upload,
     serialize_capability_manifest,
+    serialize_metrics_descriptors,
     serialize_multisport_children,
+)
+from garmin_cli.services.activities import (
+    build_capability_manifest,
+    fetch_laps_for_activity,
 )
 
 
@@ -74,6 +93,7 @@ def list_cmd(
     date_to: datetime | None,
 ) -> None:
     """List recent activities, optionally filtered by date range."""
+    validate_limit(limit)
     has_date_args = any(x is not None for x in (value_date, days, date_from, date_to))
     start_date = None
     end_date = None
@@ -88,24 +108,8 @@ def list_cmd(
     date_range = (start_date, end_date) if start_date is not None else None
     render_output(
         ctx.obj["config"].output_format, "activity list", data, COLUMNS_ACTIVITY_SUMMARY,
-        date_range=date_range,
+        date_range=date_range,  # type: ignore[arg-type]
     )
-
-
-def _fetch_one_activity_laps(raw: dict, activity_id: object) -> tuple[list[dict], SportProfile]:
-    """Fetch laps for a single (non-multisport) activity, auto-routing by sport.
-
-    pool-swim activities use the typed_splits endpoint to get per-pool-length
-    rows; everything else uses the raw-URL splits endpoint.
-    """
-    type_key = activity_type_key(raw)
-    profile = profile_for(type_key)
-    if profile.type_keys & LAP_SWIM_TYPE_KEYS:
-        splits_payload = get_activity_typed_splits(activity_id)
-    else:
-        splits_payload = get_activity_splits(activity_id)
-    rows = serialize_activity_laps(raw, splits_payload, profile)
-    return rows, profile
 
 
 def _fetch_laps_for_activity(raw: dict, activity_id: str) -> tuple[list[dict], SportProfile]:
@@ -115,21 +119,21 @@ def _fetch_laps_for_activity(raw: dict, activity_id: str) -> tuple[list[dict], S
     and stamps ``leg_index`` (0-based) onto every returned row. The returned
     profile is the parent's profile (for table column hint); per-row
     sport-specificity remains intact via the columns each row carries.
+
+    Thin wrapper over :func:`garmin_cli.services.activities.fetch_laps_for_activity`
+    that binds this module's endpoint/serializer references so test patches on
+    ``garmin_cli.commands.activities.*`` stay effective.
     """
-    if is_multisport_parent(raw):
-        children = get_multisport_children(raw)
-        if children:
-            all_rows: list[dict] = []
-            for idx, child in enumerate(children):
-                child_id = child.get("activityId")
-                if child_id is None:
-                    continue
-                child_rows, _ = _fetch_one_activity_laps(child, child_id)
-                for row in child_rows:
-                    row["leg_index"] = idx
-                all_rows.extend(child_rows)
-            return all_rows, profile_for(activity_type_key(raw))
-    return _fetch_one_activity_laps(raw, activity_id)
+    return fetch_laps_for_activity(
+        raw,
+        activity_id,
+        activity_type_key=activity_type_key,
+        is_multisport_parent=is_multisport_parent,
+        get_multisport_children=get_multisport_children,
+        splits_fn=get_activity_splits,
+        typed_splits_fn=get_activity_typed_splits,
+        serialize_laps=serialize_activity_laps,
+    )
 
 
 @activity.command("get")
@@ -172,16 +176,13 @@ def get_cmd(ctx: click.Context, activity_id: str, detail: bool, include_laps: bo
     # envelopes union per-child manifests with leg_index attached.
     manifest: list[dict] = []
     if detail:
-        if children_raw:
-            for idx, child in enumerate(children_raw):
-                child_row = serialize_activity_detail(child)
-                child_projected = child_row[0] if child_row else None
-                manifest.extend(serialize_capability_manifest(
-                    child, child_projected, leg_index=idx,
-                ))
-        else:
-            projected = data[0] if data else None
-            manifest = serialize_capability_manifest(raw, projected)
+        manifest = build_capability_manifest(
+            raw,
+            data,
+            children_raw,
+            serialize_detail=serialize_activity_detail,
+            serialize_manifest=serialize_capability_manifest,
+        )
 
     if fmt == "json":
         envelope = make_envelope(command="activity get", data=data)
@@ -201,7 +202,7 @@ def get_cmd(ctx: click.Context, activity_id: str, detail: bool, include_laps: bo
         if include_laps:
             click.echo("")
             click.echo("Laps:")
-            echo_table(laps_rows, columns_for_lap(laps_profile))
+            echo_table(laps_rows, columns_for_lap(laps_profile))  # type: ignore[arg-type]
         if manifest:
             footnote = render_capability_footnote(*manifest_summary_counts(manifest))
             if footnote:
@@ -219,7 +220,7 @@ def get_cmd(ctx: click.Context, activity_id: str, detail: bool, include_laps: bo
             echo_csv(data, csv_columns)
         if include_laps:
             click.echo("")
-            lap_columns = columns_for_lap(laps_profile)
+            lap_columns = columns_for_lap(laps_profile)  # type: ignore[arg-type]
             echo_csv(laps_rows, lap_columns)
 
 
@@ -255,3 +256,86 @@ def weather_cmd(ctx: click.Context, activity_id: str) -> None:
     raw = get_activity_weather(activity_id)
     data = [raw] if isinstance(raw, dict) else (raw or [])
     render_output(ctx.obj["config"].output_format, "activity weather", data, COLUMNS_ACTIVITY_WEATHER)
+
+
+@activity.command("metrics-describe")
+@click.argument("activity_id")
+@click.pass_context
+def metrics_describe_cmd(ctx: click.Context, activity_id: str) -> None:
+    """Describe the dynamic metric schema for an activity's detail stream.
+
+    Returns one row per metric descriptor: key, unit, metricsIndex.
+    Use this to discover what metrics a watch recorded for a specific activity.
+    """
+    ensure_authenticated(ctx.obj["config"])
+    raw = get_activity_details(activity_id)
+    rows = serialize_metrics_descriptors(raw)
+    render_output(ctx.obj["config"].output_format, "activity metrics-describe", rows, COLUMNS_METRICS_DESCRIPTORS)
+
+
+@activity.command("download")
+@click.argument("activity_id")
+@click.option(
+    "--fmt",
+    type=click.Choice(["original", "tcx", "gpx", "kml", "csv"]),
+    default="original",
+    help="Download format. 'original' is the FIT file in a ZIP archive.",
+)
+@click.option(
+    "--output",
+    "output_path",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Output file path. Defaults to activity_<id><ext> in the current directory.",
+)
+@click.option("--force", is_flag=True, default=False, help="Overwrite the output file if it exists.")
+@click.pass_context
+def download_cmd(
+    ctx: click.Context,
+    activity_id: str,
+    fmt: str,
+    output_path: str | None,
+    force: bool,
+) -> None:
+    """Download an activity's file (original FIT/ZIP, TCX, GPX, KML, or CSV) to disk."""
+    ensure_authenticated(ctx.obj["config"])
+    target = Path(output_path) if output_path else Path.cwd() / f"activity_{activity_id}{extension_for_format(fmt)}"
+    if target.exists() and not force:
+        raise GarminCliError(
+            error=f"Output file already exists: {target}. Use --force to overwrite.",
+            error_code="INVALID_INPUT",
+        )
+    if not target.parent.is_dir():
+        raise GarminCliError(
+            error=f"Output directory does not exist: {target.parent}",
+            error_code="INVALID_INPUT",
+        )
+    payload = download_activity(activity_id, fmt)
+    target.write_bytes(payload)
+    rows = serialize_activity_download(activity_id, fmt, str(target), len(payload))
+    render_output(ctx.obj["config"].output_format, "activity download", rows, COLUMNS_ACTIVITY_DOWNLOAD)
+
+
+@activity.command("upload")
+@click.argument("file_path", metavar="FILE", type=click.Path(dir_okay=False))
+@click.pass_context
+def upload_cmd(ctx: click.Context, file_path: str) -> None:
+    """Upload an activity file (FIT, GPX, or TCX) to Garmin Connect."""
+    ensure_authenticated(ctx.obj["config"])
+    raw = upload_activity(file_path)
+    rows = serialize_activity_upload(file_path, raw)
+    render_output(ctx.obj["config"].output_format, "activity upload", rows, COLUMNS_ACTIVITY_UPLOAD)
+
+
+@activity.command("delete")
+@click.argument("activity_id")
+@click.option("--confirm", is_flag=True, default=False)
+@click.pass_context
+def delete_cmd(ctx: click.Context, activity_id: str, confirm: bool) -> None:
+    """Delete an activity by ID."""
+    ensure_authenticated(ctx.obj["config"])
+    if not confirm:
+        click.confirm(f"Delete activity {activity_id}?", abort=True)
+    delete_activity(activity_id)
+    rows = serialize_activity_delete(activity_id)
+    render_output(ctx.obj["config"].output_format, "activity delete", rows, COLUMNS_ACTIVITY_DELETE)

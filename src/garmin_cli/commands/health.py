@@ -7,13 +7,17 @@ from typing import Any, Callable
 import click
 
 from garmin_cli.auth import ensure_authenticated
+from garmin_cli.commands._options import date_range_options
 from garmin_cli.date_utils import CLICK_DATE_TYPE, resolve_click_dates
 from garmin_cli.endpoints.health import (
     get_body_battery_range,
+    get_daily_summary_range,
     get_hrv,
+    get_intensity_minutes_range,
     get_resting_hr_range,
     get_sleep,
     get_spo2_range,
+    get_steps_range,
     get_stress_range,
     get_training_readiness_range,
     get_training_status,
@@ -22,19 +26,25 @@ from garmin_cli.endpoints.health import (
 from garmin_cli.output import render_output
 from garmin_cli.serializers import (
     COLUMNS_BODY_BATTERY,
+    COLUMNS_DAILY_SUMMARY,
     COLUMNS_HRV,
+    COLUMNS_INTENSITY_MINUTES,
     COLUMNS_READINESS,
     COLUMNS_RESTING_HR,
     COLUMNS_SLEEP,
     COLUMNS_SPO2,
     COLUMNS_STATUS,
+    COLUMNS_STEPS,
     COLUMNS_STRESS,
     COLUMNS_WEIGHT,
     serialize_body_battery,
+    serialize_daily_summary,
     serialize_hrv,
+    serialize_intensity_minutes,
     serialize_resting_hr,
     serialize_sleep,
     serialize_spo2,
+    serialize_steps,
     serialize_stress,
     serialize_training_readiness,
     serialize_training_status,
@@ -75,11 +85,7 @@ def health() -> None:
 
 
 @health.command()
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--ahead", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options(include_ahead=True)
 @click.pass_context
 def sleep(
     ctx: click.Context,
@@ -105,10 +111,7 @@ def sleep(
 
 
 @health.command()
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def hrv(
     ctx: click.Context,
@@ -132,10 +135,7 @@ def hrv(
 
 
 @health.command()
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def weight(
     ctx: click.Context,
@@ -159,10 +159,7 @@ def weight(
 
 
 @health.command("body-battery")
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def body_battery(
     ctx: click.Context,
@@ -186,10 +183,7 @@ def body_battery(
 
 
 @health.command()
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def stress(
     ctx: click.Context,
@@ -213,10 +207,7 @@ def stress(
 
 
 @health.command()
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def spo2(
     ctx: click.Context,
@@ -240,10 +231,7 @@ def spo2(
 
 
 @health.command("resting-hr")
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def resting_hr(
     ctx: click.Context,
@@ -267,10 +255,7 @@ def resting_hr(
 
 
 @health.command("readiness")
-@click.option("--date", "value_date", type=_DATE_TYPE, default=None)
-@click.option("--days", type=int)
-@click.option("--from", "date_from", type=_DATE_TYPE, default=None)
-@click.option("--to", "date_to", type=_DATE_TYPE, default=None)
+@date_range_options()
 @click.pass_context
 def readiness(
     ctx: click.Context,
@@ -310,4 +295,79 @@ def status(
         data,
         COLUMNS_STATUS,
         date_range=(start, end),
+    )
+
+
+@health.command("steps")
+@date_range_options()
+@click.pass_context
+def steps(
+    ctx: click.Context,
+    value_date: datetime | None,
+    days: int | None,
+    date_from: datetime | None,
+    date_to: datetime | None,
+) -> None:
+    """Get steps data."""
+    _render_health_range(
+        ctx,
+        "health steps",
+        get_steps_range,
+        serialize_steps,
+        COLUMNS_STEPS,
+        value_date,
+        days,
+        date_from,
+        date_to,
+    )
+
+
+@health.command("daily-summary")
+@date_range_options()
+@click.pass_context
+def daily_summary(
+    ctx: click.Context,
+    value_date: datetime | None,
+    days: int | None,
+    date_from: datetime | None,
+    date_to: datetime | None,
+) -> None:
+    """Get daily summary data (steps, distance, calories, floors, intensity minutes, resting HR).
+
+    Note: large date ranges may be slow — one API call is made per day.
+    """
+    _render_health_range(
+        ctx,
+        "health daily-summary",
+        get_daily_summary_range,
+        serialize_daily_summary,
+        COLUMNS_DAILY_SUMMARY,
+        value_date,
+        days,
+        date_from,
+        date_to,
+    )
+
+
+@health.command("intensity-minutes")
+@date_range_options()
+@click.pass_context
+def intensity_minutes(
+    ctx: click.Context,
+    value_date: datetime | None,
+    days: int | None,
+    date_from: datetime | None,
+    date_to: datetime | None,
+) -> None:
+    """Get intensity minutes data."""
+    _render_health_range(
+        ctx,
+        "health intensity-minutes",
+        get_intensity_minutes_range,
+        serialize_intensity_minutes,
+        COLUMNS_INTENSITY_MINUTES,
+        value_date,
+        days,
+        date_from,
+        date_to,
     )

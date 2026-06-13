@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import types
 from datetime import date
 from typing import Any
 
 from garminconnect import Garmin
 
+from garmin_cli._env import _env_float
 from garmin_cli.token_store import (
     detect_legacy_tokens,
     ensure_secure_directory,
@@ -16,6 +19,40 @@ from garmin_cli.token_store import (
 )
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_HTTP_TIMEOUT: float = 30.0
+
+# RLock so that the same thread can re-acquire (e.g. login -> _set_backend).
+_backend_lock: threading.RLock = threading.RLock()
+
+
+def _resolve_http_timeout() -> float:
+    """Return the configured HTTP timeout in seconds.
+
+    Reads ``GARMIN_CLI_HTTP_TIMEOUT`` from the environment.  Invalid or
+    non-positive values are silently ignored and the default (30 s) is used.
+    """
+    return _env_float("GARMIN_CLI_HTTP_TIMEOUT", _DEFAULT_HTTP_TIMEOUT, allow_zero=False)
+
+
+def _apply_timeout(garmin: Garmin) -> None:
+    """Wrap *garmin.client._run_request* to enforce the configured timeout.
+
+    The upstream ``garminconnect.client.Client._run_request`` injects
+    ``timeout=15`` when the caller omits it.  We replace that default with
+    our configurable value by wrapping the bound method at the instance level
+    so every API call inherits it without touching the installed package.
+    """
+    timeout = _resolve_http_timeout()
+    inner_client = garmin.client
+    original_run_request = inner_client._run_request.__func__  # type: ignore[attr-defined]
+
+    def _patched_run_request(self: Any, method: str, path: str, **kwargs: Any) -> Any:
+        if "timeout" not in kwargs:
+            kwargs["timeout"] = timeout
+        return original_run_request(self, method, path, **kwargs)
+
+    inner_client._run_request = types.MethodType(_patched_run_request, inner_client)  # type: ignore[method-assign]
 
 
 RAW_FALLBACKS: tuple[dict[str, str], ...] = (
@@ -38,20 +75,23 @@ def get_raw_fallback_registry() -> list[dict[str, str]]:
 
 
 def _require_backend() -> Garmin:
-    if _backend is None:
-        raise RuntimeError("Garmin backend is not authenticated")
-    return _backend
+    with _backend_lock:
+        if _backend is None:
+            raise RuntimeError("Garmin backend is not authenticated")
+        return _backend
 
 
 def _set_backend(client: Garmin, garth_home: str | None = None) -> None:
     global _backend, _garth_home
-    _backend = client
-    _garth_home = garth_home
+    with _backend_lock:
+        _backend = client
+        _garth_home = garth_home
 
 
 def _normalize_home(path: str | None = None) -> str | None:
     if path is None:
-        return _garth_home
+        with _backend_lock:
+            return _garth_home
     return str(ensure_secure_directory(path))
 
 
@@ -65,6 +105,7 @@ def login(
     """Authenticate with Garmin Connect without persisting the tokenstore yet."""
     normalized_home = _normalize_home(garth_home)
     client = Garmin(email, password, prompt_mfa=prompt_mfa)
+    _apply_timeout(client)
     previous_env = os.environ.pop("GARMINTOKENS", None)
     try:
         client.login()
@@ -92,6 +133,7 @@ def resume(garth_home: str) -> None:
         raise FileNotFoundError("No garmin_tokens.json found in the Garmin home directory")
 
     client = Garmin()
+    _apply_timeout(client)
     client.login(tokenstore=garth_home)
     _set_backend(client, garth_home)
     logger.debug("Garmin session resumed from %s", garth_home)
@@ -99,12 +141,13 @@ def resume(garth_home: str) -> None:
 
 def save(garth_home: str) -> None:
     """Persist the current backend tokenstore into the configured Garmin home."""
-    client = _require_backend()
-    directory = ensure_secure_directory(garth_home, create=True)
-    client.client.dump(str(directory))
-    secure_token_file(str(directory))
-    _set_backend(client, str(directory))
-    logger.debug("Garmin session saved to %s", directory)
+    with _backend_lock:
+        client = _require_backend()
+        directory = ensure_secure_directory(garth_home, create=True)
+        client.client.dump(str(directory))
+        secure_token_file(str(directory))
+        _set_backend(client, str(directory))
+    logger.debug("Garmin session saved to %s", garth_home)
 
 
 def connectapi(
@@ -196,3 +239,29 @@ def get_activity_hr_in_timezones(activity_id: int | str) -> Any:
     """Use the typed upstream HR-time-in-zone helper."""
     client = _require_backend()
     return client.get_activity_hr_in_timezones(activity_id)
+
+
+def download_activity(activity_id: int | str, dl_fmt: Any) -> bytes:
+    """Use the typed upstream activity-download helper.
+
+    *dl_fmt* must be a ``Garmin.ActivityDownloadFormat`` enum member.
+    Returns raw bytes — caller is responsible for writing to disk.
+    """
+    client = _require_backend()
+    return client.download_activity(str(activity_id), dl_fmt=dl_fmt)
+
+
+def upload_activity(activity_path: str) -> Any:
+    """Use the typed upstream activity-upload helper.
+
+    *activity_path* must exist on disk and have a FIT, GPX, or TCX extension.
+    Returns the upstream response payload (shape varies by file format).
+    """
+    client = _require_backend()
+    return client.upload_activity(activity_path)
+
+
+def delete_activity(activity_id: int | str) -> Any:
+    """Use the typed upstream activity-delete helper."""
+    client = _require_backend()
+    return client.delete_activity(str(activity_id))

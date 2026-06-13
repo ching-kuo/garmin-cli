@@ -22,7 +22,7 @@ def read_workout_input(
         fmt = input_format or "json"
     elif file_path is not None:
         try:
-            with open(file_path, "r", encoding="utf-8") as fh:
+            with open(file_path, encoding="utf-8") as fh:
                 raw_text = fh.read()
         except FileNotFoundError:
             raise GarminCliError(

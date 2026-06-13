@@ -103,6 +103,16 @@ garmin-cli --json health readiness --days 7
 
 # Training status (single day only) -- fields: date, training_status, load_type
 garmin-cli --json health status --date 2026-03-11
+
+# Steps -- fields: date, total_steps, total_distance, step_goal
+garmin-cli --json health steps --days 7
+
+# Daily summary -- fields: date, total_steps, distance_km, calories, floors, moderate_intensity_minutes, vigorous_intensity_minutes, resting_hr
+# Note: one API call per day — large ranges may be slow
+garmin-cli --json health daily-summary --days 7
+
+# Intensity minutes -- fields: date, moderate_value, vigorous_value, weekly_goal
+garmin-cli --json health intensity-minutes --days 7
 ```
 
 ### Activities
@@ -139,6 +149,21 @@ garmin-cli --json activity zones 12345678901
 
 # Weather for an activity -- fields: temperature, weatherIconCode, windSpeed, windDirectionDegrees, humidity, precipProbability
 garmin-cli --json activity weather 12345678901
+
+# Metric descriptors for an activity's detail stream -- fields: key, unit, metricsIndex
+# Use to discover what metrics a watch recorded before requesting samples
+garmin-cli --json activity metrics-describe 12345678901
+
+# Download an activity file to disk -- fields: id, format, path, size_bytes
+# --fmt: original (FIT in a ZIP, default), tcx, gpx, kml, csv. Never prints
+# binary to stdout; refuses to overwrite unless --force.
+garmin-cli --json activity download 12345678901 --fmt gpx --output run.gpx
+
+# Upload an activity file (.fit / .gpx / .tcx) -- fields: file, status, activity_id
+garmin-cli --json activity upload run.fit
+
+# Delete an activity (--confirm skips the interactive prompt) -- fields: id, status
+garmin-cli --json activity delete 12345678901 --confirm
 ```
 
 `--limit` defaults to 20, max 100. `--type` filters by Garmin activity type key (e.g., `running`, `cycling`, `swimming`).
@@ -387,6 +412,24 @@ garmin-cli --json performance vo2max --date 2026-03-11
 
 # Lactate threshold zones -- fields: sport, lt_hr_bpm, lt_pace
 garmin-cli --json performance zones
+
+# Race predictions -- fields: race_type, predicted_time_seconds, distance_meters
+garmin-cli --json performance race-predictions
+
+# Endurance score -- fields: date, overall_score, endurance_classification
+# Note: one API call per day — large ranges may be slow
+garmin-cli --json performance endurance-score --days 7
+
+# Hill score -- fields: date, overall_score, endurance_score, strength_score
+# Note: one API call per day — large ranges may be slow
+garmin-cli --json performance hill-score --days 7
+```
+
+### Devices
+
+```bash
+# List registered devices -- fields: device_id, display_name, device_type, last_sync_time
+garmin-cli --json device list
 ```
 
 ## Patterns for agents
@@ -531,8 +574,25 @@ Read tools and four workout write tools (`workout_create`, `workout_schedule`, `
 | `performance_zones` | *(none)* | `{count, rows}` |
 | `device_list` | *(none)* | `{count, rows}` — registered devices with type and last sync |
 | `login_status` | *(none)* | `{authenticated, garmin_home}` |
+| `report_snapshot` | `kind` (`morning`\|`evening`\|`weekly`), `date?` | `{kind, date_range, sections, unavailable?}` — one composite call that fans out the day's (or week's) reads server-side. `sections` maps section name → rows (same shapes as the per-domain tools). Sections with no data are empty and listed in `unavailable` with a `reason` (`not_found`\|`no_data`). `date` (YYYY-MM-DD) defaults to today; `weekly` covers the anchor day and the six prior days. |
 
 Dates use `YYYY-MM-DD` format. Max date range: 90 days. Errors surface as MCP ToolError with the original error message.
+
+#### `report_snapshot` section composition
+
+Use `report_snapshot` to build a recurring morning/evening/weekly report in a single tool call instead of orchestrating a dozen individual reads. Each `kind` returns a fixed set of sections:
+
+| `kind` | Sections |
+|--------|----------|
+| `morning` | `sleep`, `hrv` (last night), `readiness`, `body_battery`, `planned_today` |
+| `evening` | `steps`, `intensity_minutes`, `stress`, `body_battery`, `activities_today`, `planned_tomorrow` |
+| `weekly` | `sleep`, `hrv`, `stress`, `steps`, `resting_hr`, `body_battery` (7-day), `activities`, `endurance_score`, `race_predictions` |
+
+Because the section set is fixed, a report can never silently drop a metric: an absent metric is an empty section plus an `unavailable` entry, so the agent can state the gap rather than infer a value. Auth, rate-limit, and server/network failures fail the whole call (the snapshot would be untrustworthy); only per-day "no data" gaps degrade to `unavailable`.
+
+`date_range` reports the anchor day (or the 7-day window for `weekly`). The `evening` `planned_tomorrow` section deliberately holds the day *after* the anchor and so falls outside `date_range` — it is a forward-looking section, not part of the reported window.
+
+Latency note: `weekly` (and the `daily-summary`/`endurance-score`/`hill-score` reads generally) fan out one upstream request per day with a short inter-call delay, so a weekly snapshot makes tens of sequential calls and can take 10-20s. Tune `GARMIN_CLI_DAILY_CALL_DELAY` (seconds, default `0.5`) down if your MCP client times out, up to be gentler on Garmin's rate limits.
 
 `activity_get(detail=true)` may carry an `unavailable[]` array (omitted when empty) annotating registry-known metrics with `not_applicable_to_sport` (the metric isn't meaningful for the sport) or `absent_in_response` (the metric applies but the upstream payload didn't include it). Multisport parents union per-child manifests with a 0-based `leg_index` attached. `activity_laps`, `activity_hr_zones`, and `activity_metrics_describe` do not carry the manifest in this release; use `activity_get(detail=true)` for sport-applicability checks.
 

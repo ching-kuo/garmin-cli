@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 
 
-def test_pyproject_package_discovery_includes_src() -> None:
+def test_pyproject_package_discovery_src_only() -> None:
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     config = tomllib.loads(pyproject.read_text())
 
@@ -13,5 +17,7 @@ def test_pyproject_package_discovery_includes_src() -> None:
     where = set(find_config.get("where", []))
     include = set(find_config.get("include", []))
 
-    assert "src" in where
-    assert "garmin_cli*" in include
+    assert where == {"src"}, f"Expected where={{'src'}}, got {where!r}"
+    assert "." not in where, "Root '.' must not be in 'where' (shadow package removed)"
+    assert "garmin_cli*" in include, "'garmin_cli*' must be in include"
+    assert "garmin*" not in include, "'garmin*' must not be in include (shadow package removed)"

@@ -53,6 +53,15 @@ export GARMIN_PASSWORD="yourpassword"
 garmin-cli health sleep --days 1
 ```
 
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GARMIN_EMAIL` | — | Account email for credential-based login |
+| `GARMIN_PASSWORD` | — | Account password for credential-based login |
+| `GARMIN_CLI_HTTP_TIMEOUT` | `30` | HTTP request timeout in seconds (float); invalid or non-positive values fall back to `30` |
+| `GARMIN_CLI_RETRY_DELAYS` | `2,4,8` | Comma-separated retry delay sequence in seconds (e.g. `1,2,4`); invalid values fall back to `2,4,8` |
+| `GARMIN_CLI_AUTH_PROBE_TTL` | `600` | Seconds to cache a successful auth probe in the MCP server (float); `0` disables caching and probes on every call |
+| `GARMIN_CLI_DAILY_CALL_DELAY` | `0.5` | Inter-call delay in seconds (float) for endpoints that fan out one request per day (e.g. `daily-summary`); invalid or negative values fall back to `0.5` |
+
 ### Custom session directory
 
 ```bash
@@ -106,28 +115,39 @@ Exit code is always `0` on success, `1` on error.
 ### Health
 
 ```bash
-garmin-cli health sleep       [--date DATE | --from DATE --to DATE | --days N]
-garmin-cli health hrv         [--date DATE | --from DATE --to DATE | --days N]
-garmin-cli health weight      [--date DATE | --from DATE --to DATE | --days N]
-garmin-cli health body-battery [--date DATE | --from DATE --to DATE | --days N]
-garmin-cli health stress      [--date DATE | --from DATE --to DATE | --days N]
-garmin-cli health spo2        [--date DATE | --from DATE --to DATE | --days N]
-garmin-cli health resting-hr  [--date DATE | --from DATE --to DATE | --days N]
-garmin-cli health readiness   [--date DATE | --from DATE --to DATE | --days N]
-garmin-cli health status      [--date DATE]
+garmin-cli health sleep            [--date DATE | --from DATE --to DATE | --days N]
+garmin-cli health hrv              [--date DATE | --from DATE --to DATE | --days N]
+garmin-cli health weight           [--date DATE | --from DATE --to DATE | --days N]
+garmin-cli health body-battery     [--date DATE | --from DATE --to DATE | --days N]
+garmin-cli health stress           [--date DATE | --from DATE --to DATE | --days N]
+garmin-cli health spo2             [--date DATE | --from DATE --to DATE | --days N]
+garmin-cli health resting-hr       [--date DATE | --from DATE --to DATE | --days N]
+garmin-cli health readiness        [--date DATE | --from DATE --to DATE | --days N]
+garmin-cli health status           [--date DATE]
+garmin-cli health steps            [--date DATE | --from DATE --to DATE | --days N]
+garmin-cli health daily-summary    [--date DATE | --from DATE --to DATE | --days N]
+garmin-cli health intensity-minutes [--date DATE | --from DATE --to DATE | --days N]
 ```
+
+`health daily-summary` makes one API call per day — large date ranges may be slow.
 
 ### Activities
 
 ```bash
-garmin-cli activity list    [--limit N] [--type TYPE] [--search TEXT] [--date DATE | --from DATE --to DATE | --days N]
-garmin-cli activity get     ACTIVITY_ID [--detail] [--laps]  # --detail/-d shows sport-aware metrics; --laps appends lap data
-garmin-cli activity laps    ACTIVITY_ID  # per-lap rows (run/bike) or per-pool-length rows (lap_swimming)
-garmin-cli activity zones   ACTIVITY_ID  # HR time-in-zone breakdown
-garmin-cli activity weather ACTIVITY_ID
+garmin-cli activity list             [--limit N] [--type TYPE] [--search TEXT] [--date DATE | --from DATE --to DATE | --days N]
+garmin-cli activity get              ACTIVITY_ID [--detail] [--laps]  # --detail/-d shows sport-aware metrics; --laps appends lap data
+garmin-cli activity laps             ACTIVITY_ID  # per-lap rows (run/bike) or per-pool-length rows (lap_swimming)
+garmin-cli activity zones            ACTIVITY_ID  # HR time-in-zone breakdown
+garmin-cli activity weather          ACTIVITY_ID
+garmin-cli activity metrics-describe ACTIVITY_ID  # metric descriptors: key, unit, metricsIndex
+garmin-cli activity download         ACTIVITY_ID [--fmt original|tcx|gpx|kml|csv] [--output PATH] [--force]
+garmin-cli activity upload           FILE         # .fit / .gpx / .tcx
+garmin-cli activity delete           ACTIVITY_ID [--confirm]
 ```
 
 `--limit` defaults to 20, max 100. `--type` filters by activity type key (e.g., `running`, `cycling`).
+
+`activity download` writes the activity file to disk (it never prints binary to stdout). `--fmt` defaults to `original` (the FIT file inside a ZIP archive); the default output name is `activity_<id><ext>` in the current directory, and an existing file is not overwritten unless `--force` is given. `activity delete` prompts for confirmation unless `--confirm` is passed.
 
 #### Detailed sport-specific metrics
 
@@ -185,6 +205,17 @@ YAML input is supported out of the box. See [SKILL.md](SKILL.md) for the full wo
 garmin-cli performance thresholds
 garmin-cli performance zones
 garmin-cli performance vo2max
+garmin-cli performance race-predictions
+garmin-cli performance endurance-score [--date DATE | --from DATE --to DATE | --days N]
+garmin-cli performance hill-score      [--date DATE | --from DATE --to DATE | --days N]
+```
+
+`performance endurance-score` and `performance hill-score` make one API call per day — large date ranges may be slow.
+
+### Devices
+
+```bash
+garmin-cli device list  # registered devices: device_id, display_name, device_type, last_sync_time
 ```
 
 ## Normalized JSON Schemas
@@ -262,7 +293,7 @@ garmin-cli --json activity list --limit 5
 
 ## MCP Server (Optional)
 
-Expose garmin-cli as an MCP tool server for local or remote MCP clients. Includes read tools for health, activities, workouts, performance, and devices, plus four workout write tools (`workout_create`, `workout_schedule`, `workout_update`, `workout_delete`) with dry-run preview on create and update.
+Expose garmin-cli as an MCP tool server for local or remote MCP clients. Includes read tools for health, activities, workouts, performance, and devices, plus four workout write tools (`workout_create`, `workout_schedule`, `workout_update`, `workout_delete`) with dry-run preview on create and update. The `report_snapshot` tool assembles a full morning/evening/weekly report in a single call, fanning out the underlying reads server-side — designed for recurring agent-driven daily summaries. See [SKILL.md](SKILL.md#report_snapshot-section-composition) for its section composition.
 
 ### Why garmin-cli is not on PyPI
 
@@ -377,7 +408,7 @@ See [SKILL.md](SKILL.md#mcp-server-alternative) for the full tool list and param
 
 ```bash
 pip install -e ".[dev]"
-pytest tests/            # unit tests (730+ tests)
+pytest tests/            # unit tests (1100+ tests)
 pytest tests/ --e2e      # unit + e2e tests (requires GARMIN_HOME/garmin_tokens.json)
 ```
 

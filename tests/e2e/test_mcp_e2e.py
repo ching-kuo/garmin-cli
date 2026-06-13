@@ -273,3 +273,32 @@ def test_activity_laps_mcp_multisport_fan_out(mcp_server_live, rate_limiter):
     assert len(leg_indices) >= 2, (
         "Expected fan-out across >=2 multisport child legs"
     )
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize(
+    "kind,expected_sections",
+    [
+        ("morning", {"sleep", "hrv", "readiness", "body_battery", "planned_today"}),
+        ("evening", {"steps", "intensity_minutes", "stress", "body_battery", "activities_today", "planned_tomorrow"}),
+        (
+            "weekly",
+            {"sleep", "hrv", "stress", "steps", "resting_hr", "body_battery", "activities", "endurance_score", "race_predictions"},
+        ),
+    ],
+)
+def test_report_snapshot_mcp(mcp_server_live, rate_limiter, kind, expected_sections):
+    parsed = _call_tool_json(
+        mcp_server_live, rate_limiter, "report_snapshot", {"kind": kind}, extra_delay=2.0
+    )
+    assert parsed["kind"] == kind
+    assert set(parsed["date_range"]) == {"from", "to"}
+    # The section set is fixed regardless of data availability.
+    assert set(parsed["sections"]) == expected_sections
+    # Every section is a list; absent data shows up as an empty list + an
+    # `unavailable` note rather than a missing key.
+    assert all(isinstance(rows, list) for rows in parsed["sections"].values())
+    noted = {entry["section"] for entry in parsed.get("unavailable", [])}
+    for name, rows in parsed["sections"].items():
+        if not rows:
+            assert name in noted, f"empty section {name} must be listed in unavailable"
