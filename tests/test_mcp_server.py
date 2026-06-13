@@ -79,6 +79,7 @@ class TestToolRegistration:
         "performance_zones",
         "device_list",
         "login_status",
+        "report_snapshot",
     })
 
     def test_all_tools_registered(self) -> None:
@@ -1895,3 +1896,172 @@ class TestImportGuard:
         result = runner.invoke(cli, ["mcp-server"])
         assert result.exit_code == 1
         assert 'pip install "garmin-cli[mcp]"' in (result.output + (result.stderr or ""))
+
+
+# ---------------------------------------------------------------------------
+# report_snapshot composite tool
+# ---------------------------------------------------------------------------
+
+class TestCollectReportSections:
+    """Unit-test the per-section fan-out / isolation helper directly."""
+
+    def test_ok_sections_collected(self) -> None:
+        from garmin_cli.mcp_server import _collect_report_sections
+
+        specs = [
+            ("a", lambda: [1], lambda raw: [{"v": 1}]),
+            ("b", lambda: [2], lambda raw: [{"v": 2}]),
+        ]
+        sections, unavailable = _collect_report_sections(specs)
+        assert sections == {"a": [{"v": 1}], "b": [{"v": 2}]}
+        assert unavailable == []
+
+    def test_empty_section_marked_no_data(self) -> None:
+        from garmin_cli.mcp_server import _collect_report_sections
+
+        specs = [("a", lambda: [], lambda raw: [])]
+        sections, unavailable = _collect_report_sections(specs)
+        assert sections == {"a": []}
+        assert unavailable == [{"section": "a", "reason": "no_data"}]
+
+    def test_not_found_isolated(self) -> None:
+        from garmin_cli.mcp_server import _collect_report_sections
+
+        def boom() -> Any:
+            raise GarminCliError(error="missing", error_code="NOT_FOUND")
+
+        specs = [
+            ("a", boom, lambda raw: [{"v": 1}]),
+            ("b", lambda: [2], lambda raw: [{"v": 2}]),
+        ]
+        sections, unavailable = _collect_report_sections(specs)
+        assert sections == {"a": [], "b": [{"v": 2}]}
+        assert unavailable == [{"section": "a", "reason": "not_found"}]
+
+    def test_fatal_error_propagates(self) -> None:
+        from garmin_cli.mcp_server import _collect_report_sections
+
+        def rate_limited() -> Any:
+            raise GarminCliError(error="slow down", error_code="RATE_LIMITED")
+
+        specs = [("a", rate_limited, lambda raw: [{"v": 1}])]
+        with pytest.raises(GarminCliError) as exc:
+            _collect_report_sections(specs)
+        assert exc.value.error_code == "RATE_LIMITED"
+
+
+class TestReportSnapshot:
+
+    def _server(self) -> Any:
+        return create_mcp_server(_config())
+
+    def test_invalid_kind_raises(self) -> None:
+        with pytest.raises(ToolError, match="kind must be one of"):
+            _call(self._server(), "report_snapshot", {"kind": "yearly"})
+
+    def test_morning_sections_and_single_day_range(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.mcp_server.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.mcp_server.get_sleep",
+            return_value=[{"dailySleepDTO": {"calendarDate": "2026-06-12", "sleepTimeSeconds": 28800}}],
+        )
+        mocker.patch("garmin_cli.mcp_server.get_hrv", return_value={"hrvSummaries": []})
+        mocker.patch("garmin_cli.mcp_server.get_training_readiness_range", return_value=[])
+        mocker.patch("garmin_cli.mcp_server.get_body_battery_range", return_value=[])
+        cal = mocker.patch("garmin_cli.mcp_server.get_calendar_range", return_value=[])
+
+        result = _call(self._server(), "report_snapshot", {"kind": "morning", "date": "2026-06-12"})
+
+        assert result["kind"] == "morning"
+        assert result["date_range"] == {"from": "2026-06-12", "to": "2026-06-12"}
+        assert set(result["sections"]) == {"sleep", "hrv", "readiness", "body_battery", "planned_today"}
+        assert len(result["sections"]["sleep"]) == 1
+        # planned_today fetches the anchor day
+        cal.assert_called_once_with(date(2026, 6, 12), date(2026, 6, 12))
+
+    def test_evening_planned_tomorrow_uses_next_day(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.mcp_server.ensure_authenticated")
+        for fn in ("get_steps_range", "get_intensity_minutes_range", "get_stress_range", "get_body_battery_range"):
+            mocker.patch(f"garmin_cli.mcp_server.{fn}", return_value=[])
+        mocker.patch("garmin_cli.mcp_server.list_activities", return_value=[])
+        cal = mocker.patch("garmin_cli.mcp_server.get_calendar_range", return_value=[])
+
+        result = _call(self._server(), "report_snapshot", {"kind": "evening", "date": "2026-06-12"})
+
+        assert result["kind"] == "evening"
+        assert set(result["sections"]) == {
+            "steps", "intensity_minutes", "stress", "body_battery", "activities_today", "planned_tomorrow",
+        }
+        cal.assert_called_once_with(date(2026, 6, 13), date(2026, 6, 13))
+
+    def test_weekly_spans_seven_days(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.mcp_server.ensure_authenticated")
+        for fn in (
+            "get_sleep", "get_hrv", "get_stress_range", "get_steps_range",
+            "get_resting_hr_range", "get_body_battery_range", "get_endurance_score_range",
+        ):
+            mocker.patch(f"garmin_cli.mcp_server.{fn}", return_value=[])
+        mocker.patch("garmin_cli.mcp_server.list_activities", return_value=[])
+        mocker.patch("garmin_cli.mcp_server.get_race_predictions", return_value=[])
+
+        result = _call(self._server(), "report_snapshot", {"kind": "weekly", "date": "2026-06-12"})
+
+        assert result["kind"] == "weekly"
+        assert result["date_range"] == {"from": "2026-06-06", "to": "2026-06-12"}
+        assert "endurance_score" in result["sections"]
+        assert "race_predictions" in result["sections"]
+
+    def test_not_found_section_degrades_gracefully(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.mcp_server.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.mcp_server.get_sleep",
+            side_effect=GarminCliError(error="no sleep", error_code="NOT_FOUND"),
+        )
+        mocker.patch(
+            "garmin_cli.mcp_server.get_hrv",
+            return_value={"hrvSummaries": [{"calendarDate": "2026-06-12", "lastNightAvg": 42}]},
+        )
+        mocker.patch("garmin_cli.mcp_server.get_training_readiness_range", return_value=[])
+        mocker.patch("garmin_cli.mcp_server.get_body_battery_range", return_value=[])
+        mocker.patch("garmin_cli.mcp_server.get_calendar_range", return_value=[])
+
+        result = _call(self._server(), "report_snapshot", {"kind": "morning", "date": "2026-06-12"})
+
+        assert result["sections"]["sleep"] == []
+        assert {"section": "sleep", "reason": "not_found"} in result["unavailable"]
+        assert len(result["sections"]["hrv"]) == 1  # other sections still populated
+
+    def test_fatal_error_fails_whole_snapshot(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.mcp_server.ensure_authenticated")
+        mocker.patch(
+            "garmin_cli.mcp_server.get_sleep",
+            side_effect=GarminCliError(error="rate limited", error_code="RATE_LIMITED"),
+        )
+        with pytest.raises(ToolError, match="rate limited"):
+            _call(self._server(), "report_snapshot", {"kind": "morning", "date": "2026-06-12"})
+
+    def test_auth_missing_fails_with_hint(self, mocker: Any) -> None:
+        mocker.patch(
+            "garmin_cli.mcp_server.ensure_authenticated",
+            side_effect=GarminCliError(error="not logged in", error_code="AUTH_MISSING"),
+        )
+        with pytest.raises(ToolError, match="garmin-cli login"):
+            _call(self._server(), "report_snapshot", {"kind": "morning", "date": "2026-06-12"})
+
+    def test_defaults_to_today_when_date_omitted(self, mocker: Any) -> None:
+        mocker.patch("garmin_cli.mcp_server.ensure_authenticated")
+
+        class _FixedDate(date):
+            @classmethod
+            def today(cls) -> date:
+                return date(2026, 6, 12)
+
+        mocker.patch("garmin_cli.mcp_server.date_cls", _FixedDate)
+        mocker.patch("garmin_cli.mcp_server.get_sleep", return_value=[])
+        mocker.patch("garmin_cli.mcp_server.get_hrv", return_value={"hrvSummaries": []})
+        mocker.patch("garmin_cli.mcp_server.get_training_readiness_range", return_value=[])
+        mocker.patch("garmin_cli.mcp_server.get_body_battery_range", return_value=[])
+        mocker.patch("garmin_cli.mcp_server.get_calendar_range", return_value=[])
+
+        result = _call(self._server(), "report_snapshot", {"kind": "morning"})
+        assert result["date_range"] == {"from": "2026-06-12", "to": "2026-06-12"}

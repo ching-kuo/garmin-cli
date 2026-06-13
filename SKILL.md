@@ -574,8 +574,21 @@ Read tools and four workout write tools (`workout_create`, `workout_schedule`, `
 | `performance_zones` | *(none)* | `{count, rows}` |
 | `device_list` | *(none)* | `{count, rows}` — registered devices with type and last sync |
 | `login_status` | *(none)* | `{authenticated, garmin_home}` |
+| `report_snapshot` | `kind` (`morning`\|`evening`\|`weekly`), `date?` | `{kind, date_range, sections, unavailable?}` — one composite call that fans out the day's (or week's) reads server-side. `sections` maps section name → rows (same shapes as the per-domain tools). Sections with no data are empty and listed in `unavailable` with a `reason` (`not_found`\|`no_data`). `date` (YYYY-MM-DD) defaults to today; `weekly` covers the anchor day and the six prior days. |
 
 Dates use `YYYY-MM-DD` format. Max date range: 90 days. Errors surface as MCP ToolError with the original error message.
+
+#### `report_snapshot` section composition
+
+Use `report_snapshot` to build a recurring morning/evening/weekly report in a single tool call instead of orchestrating a dozen individual reads. Each `kind` returns a fixed set of sections:
+
+| `kind` | Sections |
+|--------|----------|
+| `morning` | `sleep`, `hrv` (last night), `readiness`, `body_battery`, `planned_today` |
+| `evening` | `steps`, `intensity_minutes`, `stress`, `body_battery`, `activities_today`, `planned_tomorrow` |
+| `weekly` | `sleep`, `hrv`, `stress`, `steps`, `resting_hr`, `body_battery` (7-day), `activities`, `endurance_score`, `race_predictions` |
+
+Because the section set is fixed, a report can never silently drop a metric: an absent metric is an empty section plus an `unavailable` entry, so the agent can state the gap rather than infer a value. Auth, rate-limit, and server/network failures fail the whole call (the snapshot would be untrustworthy); only per-day "no data" gaps degrade to `unavailable`.
 
 `activity_get(detail=true)` may carry an `unavailable[]` array (omitted when empty) annotating registry-known metrics with `not_applicable_to_sport` (the metric isn't meaningful for the sport) or `absent_in_response` (the metric applies but the upstream payload didn't include it). Multisport parents union per-child manifests with a 0-based `leg_index` attached. `activity_laps`, `activity_hr_zones`, and `activity_metrics_describe` do not carry the manifest in this release; use `activity_get(detail=true)` for sport-applicability checks.
 

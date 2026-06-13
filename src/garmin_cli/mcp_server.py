@@ -6,7 +6,11 @@ import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, timedelta
+
+# Alias so tools whose user-facing parameter is named ``date`` can still reach
+# ``date.today()`` without the parameter shadowing the class.
+date_cls = date
 from typing import Any, Literal, TypeVar
 
 WriteOutcome = Literal[
@@ -335,6 +339,47 @@ def _run_tool(
     defaults to identity for endpoints already returning row dicts.
     """
     return _envelope(serialize(_authenticated(config, fetch)))
+
+
+# Error codes that should fail the whole snapshot rather than degrade one
+# section. NOT_FOUND is treated as a recoverable per-section gap (the metric
+# simply has no data for that window); everything else (auth, rate limiting,
+# server/network failures, bad input) means the snapshot is untrustworthy.
+_SNAPSHOT_FATAL_CODES: frozenset[str] = frozenset(
+    {"AUTH_MISSING", "AUTH_FAILED", "RATE_LIMITED", "SERVER_ERROR", "NETWORK_ERROR", "INVALID_INPUT", "INTERNAL_ERROR"}
+)
+
+# One report section: a stable name, a thunk that fetches raw upstream data,
+# and a serializer that turns it into rows.
+ReportSection = tuple[str, Callable[[], Any], Callable[[Any], list[dict[str, Any]]]]
+
+
+def _collect_report_sections(
+    specs: list[ReportSection],
+) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, str]]]:
+    """Fan out a report's sections, isolating recoverable per-section gaps.
+
+    Returns ``(sections, unavailable)``. A section that raises a NOT_FOUND
+    ``GarminCliError`` or returns no rows is recorded as an empty list and noted
+    in ``unavailable`` with a ``reason`` (``not_found`` / ``no_data``). Any other
+    ``GarminCliError`` propagates so the caller's auth wrapper converts it to a
+    ``ToolError`` and the whole snapshot fails loudly.
+    """
+    sections: dict[str, list[dict[str, Any]]] = {}
+    unavailable: list[dict[str, str]] = []
+    for name, fetch, serialize in specs:
+        try:
+            rows = serialize(fetch())
+        except GarminCliError as exc:
+            if exc.error_code in _SNAPSHOT_FATAL_CODES:
+                raise
+            sections[name] = []
+            unavailable.append({"section": name, "reason": "not_found"})
+            continue
+        sections[name] = rows
+        if not rows:
+            unavailable.append({"section": name, "reason": "no_data"})
+    return sections, unavailable
 
 
 def create_mcp_server(
@@ -802,5 +847,71 @@ def create_mcp_server(
         except Exception:
             pass  # garth session expired/corrupt -- report as not authenticated
         return {"authenticated": authenticated, "garmin_home": garmin_home}
+
+    def _calendar_rows(raw: Any) -> list[dict[str, Any]]:
+        return serialize_calendar_workout({"calendarItems": raw})
+
+    @mcp.tool()
+    def report_snapshot(kind: str, date: str | None = None) -> dict[str, Any]:
+        """Assemble a multi-section daily or weekly report in a single call, fanning out the underlying reads server-side.
+
+        ``kind`` selects the report shape:
+        - ``morning``: last night's ``sleep`` and ``hrv``, today's ``readiness`` and ``body_battery``, and today's ``planned_today`` workouts.
+        - ``evening``: today's ``steps``, ``intensity_minutes``, ``stress``, ``body_battery``, completed ``activities_today``, and ``planned_tomorrow`` workouts.
+        - ``weekly``: 7-day trends for ``sleep``, ``hrv``, ``stress``, ``steps``, ``resting_hr`` and ``body_battery``, the window's ``activities``, plus ``endurance_score`` and ``race_predictions``.
+
+        ``date`` (YYYY-MM-DD) anchors the report and defaults to today; for ``weekly`` the window is the anchor day and the six preceding days. Returns ``{kind, date_range, sections, unavailable?}`` where ``sections`` maps each section name to its rows (same row shapes as the individual health/activity/performance/workout tools). A section with no data for the window is an empty list and is listed in ``unavailable`` with a ``reason`` (``not_found`` or ``no_data``); a section is never silently omitted. Auth, rate-limit, and server/network failures fail the whole call.
+        """
+        if kind not in ("morning", "evening", "weekly"):
+            raise ToolError(f"kind must be one of: morning, evening, weekly (got '{kind}')")
+        anchor = _parse_date(date, "date") if date is not None else date_cls.today()
+
+        if kind == "morning":
+            window_from = anchor
+            specs: list[ReportSection] = [
+                ("sleep", lambda: get_sleep(anchor, anchor), serialize_sleep),
+                ("hrv", lambda: get_hrv(anchor, anchor), serialize_hrv),
+                ("readiness", lambda: get_training_readiness_range(anchor, anchor), serialize_training_readiness),
+                ("body_battery", lambda: get_body_battery_range(anchor, anchor), serialize_body_battery),
+                ("planned_today", lambda: get_calendar_range(anchor, anchor), _calendar_rows),
+            ]
+        elif kind == "evening":
+            window_from = anchor
+            tomorrow = anchor + timedelta(days=1)
+            specs = [
+                ("steps", lambda: get_steps_range(anchor, anchor), serialize_steps),
+                ("intensity_minutes", lambda: get_intensity_minutes_range(anchor, anchor), serialize_intensity_minutes),
+                ("stress", lambda: get_stress_range(anchor, anchor), serialize_stress),
+                ("body_battery", lambda: get_body_battery_range(anchor, anchor), serialize_body_battery),
+                ("activities_today", lambda: list_activities(20, 0, None, None, anchor, anchor), serialize_activity_summary),
+                ("planned_tomorrow", lambda: get_calendar_range(tomorrow, tomorrow), _calendar_rows),
+            ]
+        else:  # weekly
+            window_from = anchor - timedelta(days=6)
+            start = window_from
+            specs = [
+                ("sleep", lambda: get_sleep(start, anchor), serialize_sleep),
+                ("hrv", lambda: get_hrv(start, anchor), serialize_hrv),
+                ("stress", lambda: get_stress_range(start, anchor), serialize_stress),
+                ("steps", lambda: get_steps_range(start, anchor), serialize_steps),
+                ("resting_hr", lambda: get_resting_hr_range(start, anchor), serialize_resting_hr),
+                ("body_battery", lambda: get_body_battery_range(start, anchor), serialize_body_battery),
+                ("activities", lambda: list_activities(50, 0, None, None, start, anchor), serialize_activity_summary),
+                ("endurance_score", lambda: get_endurance_score_range(start, anchor), serialize_endurance_score),
+                ("race_predictions", get_race_predictions, serialize_race_predictions),
+            ]
+
+        def produce() -> dict[str, Any]:
+            sections, unavailable = _collect_report_sections(specs)
+            result: dict[str, Any] = {
+                "kind": kind,
+                "date_range": {"from": window_from.isoformat(), "to": anchor.isoformat()},
+                "sections": sections,
+            }
+            if unavailable:
+                result["unavailable"] = unavailable
+            return result
+
+        return _authenticated(config, produce)
 
     return mcp

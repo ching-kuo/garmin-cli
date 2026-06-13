@@ -293,7 +293,7 @@ garmin-cli --json activity list --limit 5
 
 ## MCP Server (Optional)
 
-Expose garmin-cli as an MCP tool server for local or remote MCP clients. Includes read tools for health, activities, workouts, performance, and devices, plus four workout write tools (`workout_create`, `workout_schedule`, `workout_update`, `workout_delete`) with dry-run preview on create and update.
+Expose garmin-cli as an MCP tool server for local or remote MCP clients. Includes read tools for health, activities, workouts, performance, and devices, plus four workout write tools (`workout_create`, `workout_schedule`, `workout_update`, `workout_delete`) with dry-run preview on create and update. The `report_snapshot` tool assembles a full morning/evening/weekly report in a single call, fanning out the underlying reads server-side — designed for recurring agent-driven daily summaries. See [SKILL.md](SKILL.md#report_snapshot-section-composition) for its section composition.
 
 ### Why garmin-cli is not on PyPI
 
