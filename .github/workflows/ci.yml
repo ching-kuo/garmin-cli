@@ -25,32 +25,13 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,mcp]"
 
       - name: Lint with ruff
         run: ruff check src/ tests/
 
       - name: Type-check with mypy
         run: mypy src/
-
-      - name: Run tests
-        run: python -m pytest tests/ -q
-
-  mcp:
-    name: Test with MCP extras (Python 3.11)
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install dependencies with MCP extras
-        run: pip install -e ".[dev,mcp]"
 
       - name: Run tests
         run: python -m pytest tests/ -q
