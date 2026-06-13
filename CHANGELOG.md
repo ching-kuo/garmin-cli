@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
-- `garmin_cli.__version__` (and `garmin-cli --version`) now derives from installed package metadata (`importlib.metadata`) instead of a hardcoded literal, which had silently drifted to `1.2.0` across the 2.0.0/2.1.0/2.2.0 releases. `pyproject.toml` is now the single source of truth; a packaging test asserts the two stay in lockstep.
+- `garmin_cli.__version__` (and `garmin-cli --version`) now derives from installed package metadata (`importlib.metadata`) instead of a hardcoded literal, which had silently drifted to `1.2.0` across the 2.0.0/2.1.0/2.2.0 releases. `pyproject.toml` is now the single source of truth; packaging regression tests assert the metadata version, the `garmin-cli --version` output, and the `console_scripts` entry point all stay in lockstep with it.
 
 ## [2.2.0] - 2026-06-13
 
