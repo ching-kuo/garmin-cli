@@ -1,2 +1,7 @@
 """garmin-cli — Garmin Connect data extractor."""
-__version__ = "1.2.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("garmin-cli")
+except PackageNotFoundError:  # running from a source tree without installed metadata
+    __version__ = "0.0.0+unknown"
