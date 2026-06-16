@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.3.0] - 2026-06-16
 
 ### Added
 - `activity get --detail` now reports `elapsed_time_min` (total wall-clock time, from Garmin's `elapsedDuration`) alongside the existing `duration_min` (moving time), so stopped time is recoverable as `elapsed - moving`. Present in the MCP `activity_get` tool, the CLI's sport-aware detail tables, and the CSV/JSON union schema (appended last to preserve positional CSV back-compat).
